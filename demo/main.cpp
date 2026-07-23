@@ -38,7 +38,15 @@ int main() {
         std::cout << result.errorMessage << '\n';
         return 1;
     }
-    std::cout << "Hero at (6, 1): attribute=" << result.board[6][1].inheritedAttribute << "\n";
-    std::cout << "Next player=" << result.nextPlayerId << ", turn=" << result.nextTurnId << "\n\n";
-    printBoard(result.board);
+    for (const auto& row : result.game.board) {
+        for (const PieceSnapshot& piece : row) {
+            if (piece.type == PieceType::Hero) {
+                std::cout << "Hero at (" << piece.position.row << ", " << piece.position.column
+                          << "): attribute=" << piece.attributeValue
+                          << ", hp=" << piece.currentHp << '/' << piece.maxHp << "\n";
+            }
+        }
+    }
+    std::cout << "Next player=" << result.game.currentPlayerId << ", turn=" << result.game.turnId << "\n\n";
+    printBoard(result.game.board);
 }

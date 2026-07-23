@@ -15,6 +15,12 @@ add_library(sts_game
     game/Box.cpp
     game/Hero.cpp
     game/HeroFactory.cpp
+    game/CombatMath.cpp
+    game/CombatRandom.cpp
+    game/DamageResolver.cpp
+    game/CombatContext.cpp
+    game/CombatResolver.cpp
+    game/Tower.cpp
     game/BoxBoard.cpp
     game/EliminationRule.cpp
     game/GameSession.cpp
@@ -34,6 +40,8 @@ if(BUILD_TESTING)
         tests/HeroTests.cpp
         tests/ProtocolTests.cpp
         tests/ViewTransformTests.cpp
+        tests/CombatTests.cpp
+        tests/OpeningTurnTests.cpp
     )
     target_link_libraries(sts_tests PRIVATE sts_game)
     add_test(NAME sts_tests COMMAND sts_tests)
@@ -65,8 +73,64 @@ if(STS_BUILD_NETWORK)
     add_executable(sts_server server/main.cpp server/GameServer.cpp)
     target_link_libraries(sts_server PRIVATE sts_game sts_common Threads::Threads sts_asio)
 
-    add_executable(sts_client client/main.cpp client/GameClient.cpp)
-    target_link_libraries(sts_client PRIVATE sts_common Threads::Threads sts_asio)
+    add_library(sts_client_network client/GameClient.cpp)
+    target_include_directories(sts_client_network PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(sts_client_network PUBLIC sts_common Threads::Threads sts_asio)
+
+    add_executable(sts_client client/main.cpp)
+    target_link_libraries(sts_client PRIVATE sts_client_network)
+
+    option(STS_BUILD_GUI_CLIENT "Build the SFML graphical client" ON)
+    if(STS_BUILD_GUI_CLIENT)
+        FetchContent_Declare(
+            sfml
+            URL https://codeload.github.com/SFML/SFML/tar.gz/refs/tags/3.0.1
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+        set(SFML_BUILD_AUDIO OFF CACHE BOOL "" FORCE)
+        set(SFML_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(SFML_BUILD_TEST_SUITE OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(sfml)
+        if(NOT TARGET SFML::Graphics OR NOT TARGET SFML::Window OR NOT TARGET SFML::System)
+            message(FATAL_ERROR "SFML Graphics, Window and System targets are required for sts_gui_client.")
+        endif()
+
+        add_library(sts_gui_logic
+            gui/BoardGeometry.cpp
+            gui/BoxTextureCatalog.cpp
+            gui/ClientGameState.cpp
+            gui/HeroTextureCatalog.cpp
+            gui/InputController.cpp
+        )
+        target_include_directories(sts_gui_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+        target_link_libraries(sts_gui_logic PUBLIC sts_common)
+
+        add_executable(sts_gui_client
+            gui/main.cpp
+            gui/GuiGameClient.cpp
+            gui/GameWindow.cpp
+            gui/BoardRenderer.cpp
+            gui/HeroRenderer.cpp
+            gui/NetworkClient.cpp
+            gui/ResourceManager.cpp
+        )
+        target_link_libraries(sts_gui_client PRIVATE
+            sts_gui_logic
+            sts_client_network
+            SFML::Graphics
+            SFML::Window
+            SFML::System
+        )
+        if(WIN32)
+            target_link_libraries(sts_gui_client PRIVATE ws2_32 mswsock)
+        endif()
+        add_custom_command(TARGET sts_gui_client POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    ${CMAKE_SOURCE_DIR}/assets
+                    $<TARGET_FILE_DIR:sts_gui_client>/assets
+            COMMENT "Copying GUI assets next to sts_gui_client"
+        )
+    endif()
 
     if(BUILD_TESTING)
         add_executable(sts_network_tests
@@ -75,11 +139,16 @@ if(STS_BUILD_NETWORK)
         )
         target_link_libraries(sts_network_tests PRIVATE sts_game sts_common Threads::Threads sts_asio)
         add_test(NAME sts_network_tests COMMAND sts_network_tests)
+        if(STS_BUILD_GUI_CLIENT)
+            target_sources(sts_tests PRIVATE tests/GuiClientTests.cpp)
+            target_link_libraries(sts_tests PRIVATE sts_gui_logic)
+        endif()
     endif()
 
     if(WIN32)
         target_link_libraries(sts_server PRIVATE ws2_32 mswsock)
         target_link_libraries(sts_client PRIVATE ws2_32 mswsock)
+        target_link_libraries(sts_client_network PUBLIC ws2_32 mswsock)
         if(BUILD_TESTING)
             target_link_libraries(sts_network_tests PRIVATE ws2_32 mswsock)
         endif()

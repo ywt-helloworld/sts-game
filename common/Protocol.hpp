@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/BoardDimensions.hpp"
+#include "common/GameTypes.hpp"
 #include "common/PieceColor.hpp"
 #include "common/Position.hpp"
 
@@ -31,12 +32,36 @@ struct PieceSnapshot {
     PieceType type{PieceType::Box};
     PieceColor color{PieceColor::Red};
     Position position{};
-    int inheritedAttribute{};
+    int attributeValue{};
+    HeroId heroId{};
+    HeroType heroType{HeroType::None};
+    int currentHp{};
+    int maxHp{};
+    int currentBaseAttackDamage{};
+    int defense{};
+    int shield{};
+    int vulnerableLayers{};
+    int weakLayers{};
+    int radiantStars{};
+    int lightningOrbs{};
+    bool alive{true};
 
     bool operator==(const PieceSnapshot&) const = default;
 };
 
 using BoardSnapshot = std::array<std::array<PieceSnapshot, BoardColumns>, BoardRows>;
+
+struct GameSnapshot {
+    GamePhase phase{GamePhase::WaitingForPlayers};
+    int currentPlayerId{};
+    int turnId{1};
+    std::optional<int> winnerPlayerId;
+    std::array<TowerSnapshot, 2> towers{};
+    BoardSnapshot board{};
+    bool openingTurnPending{true};
+
+    bool operator==(const GameSnapshot&) const = default;
+};
 
 struct EliminateRequest {
     int playerId{};
@@ -47,15 +72,12 @@ struct EliminateRequest {
 struct EliminateResult {
     bool success{};
     std::string errorMessage;
-    int nextPlayerId{};
-    int nextTurnId{};
-    BoardSnapshot board{};
+    GameSnapshot game{};
+    std::vector<CombatEvent> combatEvents;
 };
 
 struct GameStartedMessage {
-    int currentPlayerId{};
-    int turnId{};
-    BoardSnapshot board{};
+    GameSnapshot game{};
 };
 
 struct WireMessage {

@@ -1,5 +1,6 @@
 #include "game/EliminationRule.hpp"
 
+#include "common/PlayerArea.hpp"
 #include "game/BoxBoard.hpp"
 
 #include <cmath>
@@ -47,13 +48,7 @@ ValidationResult EliminationRule::validate(const BoxBoard& board, int playerId,
 }
 
 bool EliminationRule::isInPlayerArea(int playerId, Position position) noexcept {
-    if (position.column < 0 || position.column >= BoxBoard::ColumnCount) {
-        return false;
-    }
-    if (playerId == 0) {
-        return position.row >= PlayerAreaRows && position.row < BoxBoard::RowCount;
-    }
-    return position.row >= 0 && position.row < PlayerAreaRows;
+    return playerIdForPosition(position) == playerId;
 }
 
 } // namespace sts

@@ -21,7 +21,7 @@ std::string GameClient::receiveOne() {
     std::array<std::byte, 4> header{};
     asio::read(socket_, asio::buffer(header));
     const auto length = decodeFrameLength(header);
-    if (!length.has_value() || *length > 64U * 1024U) {
+    if (!length.has_value() || *length > 256U * 1024U) {
         throw std::runtime_error("server sent an invalid message length");
     }
     std::string body(*length, '\0');

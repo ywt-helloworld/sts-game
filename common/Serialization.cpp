@@ -14,7 +14,12 @@ void writeSnapshot(std::ostream& output, const T& board) {
             output << static_cast<int>(piece.type) << ' '
                    << static_cast<int>(piece.color) << ' '
                    << piece.position.row << ' ' << piece.position.column << ' '
-                   << piece.inheritedAttribute << ' ';
+                   << piece.attributeValue << ' '
+                   << piece.heroId << ' ' << static_cast<int>(piece.heroType) << ' '
+                   << piece.currentHp << ' ' << piece.maxHp << ' '
+                   << piece.currentBaseAttackDamage << ' ' << piece.defense << ' '
+                   << piece.shield << ' ' << piece.vulnerableLayers << ' ' << piece.weakLayers << ' '
+                   << piece.radiantStars << ' ' << piece.lightningOrbs << ' ' << piece.alive << ' ';
         }
     }
 }
@@ -24,15 +29,102 @@ bool readSnapshot(std::istream& input, BoardSnapshot& board) {
         for (auto& piece : row) {
             int type{};
             int color{};
-            if (!(input >> type >> color >> piece.position.row >> piece.position.column >> piece.inheritedAttribute) ||
+            int heroType{};
+            if (!(input >> type >> color >> piece.position.row >> piece.position.column >> piece.attributeValue >>
+                  piece.heroId >> heroType >> piece.currentHp >> piece.maxHp >>
+                  piece.currentBaseAttackDamage >> piece.defense >> piece.shield >>
+                  piece.vulnerableLayers >> piece.weakLayers >> piece.radiantStars >>
+                  piece.lightningOrbs >> piece.alive) ||
                 type < static_cast<int>(PieceType::Box) || type > static_cast<int>(PieceType::Hero) ||
-                color < static_cast<int>(PieceColor::Red) || color > static_cast<int>(PieceColor::Blue)) {
+                color < static_cast<int>(PieceColor::Red) || color > static_cast<int>(PieceColor::Blue) ||
+                heroType < static_cast<int>(HeroType::None) ||
+                heroType > static_cast<int>(HeroType::ChickenPot)) {
                 return false;
             }
             piece.type = static_cast<PieceType>(type);
             piece.color = static_cast<PieceColor>(color);
+            piece.heroType = static_cast<HeroType>(heroType);
         }
     }
+    return true;
+}
+
+void writeGameSnapshot(std::ostream& output, const GameSnapshot& game) {
+    output << static_cast<int>(game.phase) << ' ' << game.currentPlayerId << ' ' << game.turnId << ' '
+           << game.winnerPlayerId.value_or(-1) << ' ';
+    for (const TowerSnapshot& tower : game.towers) {
+        output << tower.playerId << ' ' << tower.currentHp << ' ' << tower.maxHp << ' ';
+    }
+    writeSnapshot(output, game.board);
+    output << game.openingTurnPending << ' ';
+}
+
+bool readGameSnapshot(std::istream& input, GameSnapshot& game) {
+    int phase{};
+    int winner{};
+    if (!(input >> phase >> game.currentPlayerId >> game.turnId >> winner) ||
+        phase < static_cast<int>(GamePhase::WaitingForPlayers) ||
+        phase > static_cast<int>(GamePhase::Finished)) {
+        return false;
+    }
+    game.phase = static_cast<GamePhase>(phase);
+    game.winnerPlayerId = winner >= 0 ? std::optional<int>{winner} : std::nullopt;
+    for (TowerSnapshot& tower : game.towers) {
+        if (!(input >> tower.playerId >> tower.currentHp >> tower.maxHp)) {
+            return false;
+        }
+    }
+    return readSnapshot(input, game.board) && static_cast<bool>(input >> game.openingTurnPending);
+}
+
+void writeCombatEvent(std::ostream& output, const CombatEvent& event) {
+    output << static_cast<int>(event.type) << ' '
+           << event.attackerHeroId.value_or(0) << ' '
+           << event.targetHeroId.value_or(0) << ' '
+           << event.actingPlayerId.value_or(-1) << ' '
+           << event.targetPlayerId.value_or(-1) << ' '
+           << event.damage << ' ' << event.remainingHp << ' '
+           << event.winnerPlayerId.value_or(-1) << ' '
+           << static_cast<int>(event.damageKind) << ' '
+           << event.baseDamage << ' ' << event.damageAfterWeak << ' '
+           << event.damageAfterVulnerable << ' ' << event.damageAfterDefense << ' '
+           << event.shieldAbsorbed << ' ' << event.remainingShield << ' '
+           << event.amount << ' ' << event.vulnerableLayers << ' ' << event.weakLayers << ' '
+           << event.radiantStars << ' ' << event.lightningOrbs << ' '
+           << event.previousLayers << ' ' << event.addedLayers << ' ' << event.totalLayers << ' ';
+    output << event.calculatedDamage << ' ' << event.hpDamageApplied << ' '
+           << event.overkillDamage << ' ' << event.targetRemainingHp << ' ';
+}
+
+bool readCombatEvent(std::istream& input, CombatEvent& event) {
+    int type{};
+    HeroId attacker{};
+    HeroId target{};
+    int actingPlayer{};
+    int targetPlayer{};
+    int winner{};
+    int damageKind{};
+    if (!(input >> type >> attacker >> target >> actingPlayer >> targetPlayer >>
+          event.damage >> event.remainingHp >> winner >> damageKind >>
+          event.baseDamage >> event.damageAfterWeak >> event.damageAfterVulnerable >>
+          event.damageAfterDefense >> event.shieldAbsorbed >> event.remainingShield >>
+          event.amount >> event.vulnerableLayers >> event.weakLayers >>
+          event.radiantStars >> event.lightningOrbs >> event.previousLayers >>
+          event.addedLayers >> event.totalLayers >> event.calculatedDamage >>
+          event.hpDamageApplied >> event.overkillDamage >> event.targetRemainingHp) ||
+        type < static_cast<int>(CombatEventType::OpeningTurnCompleted) ||
+        type > static_cast<int>(CombatEventType::GameFinished) ||
+        damageKind < static_cast<int>(DamageKind::NormalAttack) ||
+        damageKind > static_cast<int>(DamageKind::Lightning)) {
+        return false;
+    }
+    event.type = static_cast<CombatEventType>(type);
+    event.damageKind = static_cast<DamageKind>(damageKind);
+    event.attackerHeroId = attacker == 0 ? std::nullopt : std::optional<HeroId>{attacker};
+    event.targetHeroId = target == 0 ? std::nullopt : std::optional<HeroId>{target};
+    event.actingPlayerId = actingPlayer < 0 ? std::nullopt : std::optional<int>{actingPlayer};
+    event.targetPlayerId = targetPlayer < 0 ? std::nullopt : std::optional<int>{targetPlayer};
+    event.winnerPlayerId = winner < 0 ? std::nullopt : std::optional<int>{winner};
     return true;
 }
 
@@ -69,8 +161,12 @@ std::optional<EliminateRequest> deserializeEliminateRequest(const std::string& b
 std::string serialize(const EliminateResult& result) {
     std::ostringstream output;
     output << static_cast<int>(MessageType::EliminateResult) << ' ' << result.success << ' '
-           << result.nextPlayerId << ' ' << result.nextTurnId << ' ' << std::quoted(result.errorMessage) << ' ';
-    writeSnapshot(output, result.board);
+           << std::quoted(result.errorMessage) << ' ';
+    writeGameSnapshot(output, result.game);
+    output << result.combatEvents.size() << ' ';
+    for (const CombatEvent& event : result.combatEvents) {
+        writeCombatEvent(output, event);
+    }
     return output.str();
 }
 
@@ -78,18 +174,25 @@ std::optional<EliminateResult> deserializeEliminateResult(const std::string& bod
     std::istringstream input(body);
     int type{};
     EliminateResult result;
-    if (!(input >> type >> result.success >> result.nextPlayerId >> result.nextTurnId >> std::quoted(result.errorMessage)) ||
-        type != static_cast<int>(MessageType::EliminateResult) || !readSnapshot(input, result.board)) {
+    std::size_t eventCount{};
+    if (!(input >> type >> result.success >> std::quoted(result.errorMessage)) ||
+        type != static_cast<int>(MessageType::EliminateResult) || !readGameSnapshot(input, result.game) ||
+        !(input >> eventCount) || eventCount > 4096U) {
         return std::nullopt;
+    }
+    result.combatEvents.resize(eventCount);
+    for (CombatEvent& event : result.combatEvents) {
+        if (!readCombatEvent(input, event)) {
+            return std::nullopt;
+        }
     }
     return result;
 }
 
 std::string serialize(const GameStartedMessage& message) {
     std::ostringstream output;
-    output << static_cast<int>(MessageType::GameStarted) << ' ' << message.currentPlayerId << ' '
-           << message.turnId << ' ';
-    writeSnapshot(output, message.board);
+    output << static_cast<int>(MessageType::GameStarted) << ' ';
+    writeGameSnapshot(output, message.game);
     return output.str();
 }
 
@@ -97,8 +200,8 @@ std::optional<GameStartedMessage> deserializeGameStartedMessage(const std::strin
     std::istringstream input(body);
     int type{};
     GameStartedMessage message;
-    if (!(input >> type >> message.currentPlayerId >> message.turnId) ||
-        type != static_cast<int>(MessageType::GameStarted) || !readSnapshot(input, message.board)) {
+    if (!(input >> type) || type != static_cast<int>(MessageType::GameStarted) ||
+        !readGameSnapshot(input, message.game)) {
         return std::nullopt;
     }
     return message;

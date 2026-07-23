@@ -9,7 +9,7 @@
 namespace sts {
 namespace {
 
-constexpr std::uint32_t MaximumMessageBytes = 64U * 1024U;
+constexpr std::uint32_t MaximumMessageBytes = 256U * 1024U;
 
 std::string wire(MessageType type, std::string text) {
     return serializeWireMessage({type, std::move(text)});
@@ -72,7 +72,7 @@ void GameServer::onConnected(const std::shared_ptr<ClientSession>& client) {
         client->sendAndClose(wire(MessageType::Error, "RoomFull"));
         return;
     }
-    if (game_.phase() == GamePhase::GameOver) {
+    if (game_.phase() == GamePhase::Finished) {
         client->sendAndClose(wire(MessageType::GameEnded, "the current game has ended"));
         return;
     }
@@ -91,7 +91,7 @@ void GameServer::onConnected(const std::shared_ptr<ClientSession>& client) {
         return;
     }
 
-    const GameStartedMessage started{game_.currentPlayerId(), game_.turnId(), game_.board().snapshot()};
+    const GameStartedMessage started{game_.snapshot()};
     broadcast(serialize(started));
 }
 
@@ -118,7 +118,7 @@ void GameServer::onClientDisconnected(const std::shared_ptr<ClientSession>& clie
         return;
     }
     const int playerId = client->playerId();
-    const bool wasPlaying = game_.phase() == GamePhase::Playing || game_.phase() == GamePhase::ResolvingTurn;
+    const bool wasPlaying = game_.phase() == GamePhase::Elimination || game_.phase() == GamePhase::Combat;
     players_[static_cast<std::size_t>(playerId)].reset();
     game_.markPlayerDisconnected(playerId);
 

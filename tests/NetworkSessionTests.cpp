@@ -93,26 +93,32 @@ void expectWire(Peer& peer, MessageType type) {
 GameStartedMessage expectGameStarted(Peer& peer) {
     const auto message = deserializeGameStartedMessage(peer.receive());
     REQUIRE(message.has_value());
-    REQUIRE(message->currentPlayerId == 0);
-    REQUIRE(message->turnId == 1);
+    REQUIRE(message->game.currentPlayerId == 0);
+    REQUIRE(message->game.turnId == 1);
+    REQUIRE(message->game.phase == GamePhase::Elimination);
+    REQUIRE(message->game.openingTurnPending);
+    REQUIRE(message->game.towers[0].currentHp == 1000);
+    REQUIRE(message->game.towers[1].currentHp == 1000);
     return *message;
 }
 
-std::vector<Position> findPlayerZeroPath(const BoardSnapshot& board) {
+std::vector<Position> findPlayerPath(const BoardSnapshot& board, int playerId) {
     constexpr std::array<Position, 8> directions{{{-1, -1}, {-1, 0}, {-1, 1}, {0, -1},
                                                    {0, 1}, {1, -1}, {1, 0}, {1, 1}}};
-    for (int row = PlayerAreaRows; row < BoardRows; ++row) {
+    const int firstRow = playerId == 0 ? PlayerAreaRows : 0;
+    const int rowLimit = playerId == 0 ? BoardRows : PlayerAreaRows;
+    for (int row = firstRow; row < rowLimit; ++row) {
         for (int column = 0; column < BoardColumns; ++column) {
             const Position first{row, column};
             for (const Position firstStep : directions) {
                 const Position second{first.row + firstStep.row, first.column + firstStep.column};
-                if (second.row < PlayerAreaRows || second.row >= BoardRows || second.column < 0 || second.column >= BoardColumns ||
+                if (second.row < firstRow || second.row >= rowLimit || second.column < 0 || second.column >= BoardColumns ||
                     board[first.row][first.column].color != board[second.row][second.column].color) {
                     continue;
                 }
                 for (const Position secondStep : directions) {
                     const Position third{second.row + secondStep.row, second.column + secondStep.column};
-                    if (third == first || third.row < PlayerAreaRows || third.row >= BoardRows || third.column < 0 || third.column >= BoardColumns) {
+                    if (third == first || third.row < firstRow || third.row >= rowLimit || third.column < 0 || third.column >= BoardColumns) {
                         continue;
                     }
                     if (board[first.row][first.column].color == board[third.row][third.column].color) {
@@ -122,7 +128,7 @@ std::vector<Position> findPlayerZeroPath(const BoardSnapshot& board) {
             }
         }
     }
-    throw std::runtime_error("the deterministic board unexpectedly has no player-zero path");
+    throw std::runtime_error("the deterministic board unexpectedly has no path for the requested player");
 }
 
 void testDisconnectBeforeStartReusesPlayerZero() {
@@ -151,7 +157,7 @@ void testTwoLivePlayersStartAndThirdGetsRoomFull() {
     expectJoin(player1, 1);
     const GameStartedMessage player0Started = expectGameStarted(player0);
     const GameStartedMessage player1Started = expectGameStarted(player1);
-    REQUIRE(player0Started.board == player1Started.board);
+    REQUIRE(player0Started.game == player1Started.game);
 
     Peer third(server.port());
     const auto message = deserializeWireMessage(third.receive());
@@ -169,7 +175,7 @@ void testDisconnectAfterStartNotifiesOpponent() {
     expectJoin(player1, 1);
     const GameStartedMessage player0Started = expectGameStarted(player0);
     const GameStartedMessage player1Started = expectGameStarted(player1);
-    REQUIRE(player0Started.board == player1Started.board);
+    REQUIRE(player0Started.game == player1Started.game);
 
     player1.close();
     expectWire(player0, MessageType::OpponentDisconnected);
@@ -185,16 +191,47 @@ void testBothPlayersReceiveTheSameBoardUpdate() {
     expectJoin(player1, 1);
     const GameStartedMessage player0Started = expectGameStarted(player0);
     const GameStartedMessage player1Started = expectGameStarted(player1);
-    REQUIRE(player0Started.board == player1Started.board);
+    REQUIRE(player0Started.game == player1Started.game);
 
-    player0.send(serialize(EliminateRequest{0, 1, findPlayerZeroPath(player0Started.board)}));
-    const auto player0Result = deserializeEliminateResult(player0.receive());
-    const auto player1Result = deserializeEliminateResult(player1.receive());
+    player0.send(serialize(EliminateRequest{0, 1, findPlayerPath(player0Started.game.board, 0)}));
+    const std::string player0Body = player0.receive();
+    const std::string player1Body = player1.receive();
+    const auto player0Result = deserializeEliminateResult(player0Body);
+    const auto player1Result = deserializeEliminateResult(player1Body);
     REQUIRE(player0Result.has_value());
     REQUIRE(player1Result.has_value());
     REQUIRE(player0Result->success);
     REQUIRE(player1Result->success);
-    REQUIRE(player0Result->board == player1Result->board);
+    REQUIRE(player0Result->game == player1Result->game);
+    REQUIRE(player0Result->combatEvents == player1Result->combatEvents);
+    REQUIRE(player0Result->game.phase == GamePhase::Elimination);
+    REQUIRE(!player0Result->game.openingTurnPending);
+    REQUIRE(player0Result->game.currentPlayerId == 1);
+    REQUIRE(player0Result->game.turnId == 2);
+    REQUIRE(!player0Result->combatEvents.empty());
+    REQUIRE(player0Result->game.towers[0].currentHp == Tower::MaxHp);
+    REQUIRE(player0Result->game.towers[1].currentHp == Tower::MaxHp);
+    bool sawOpeningCompleted = false;
+    for (const CombatEvent& event : player0Result->combatEvents) {
+        REQUIRE(event.type != CombatEventType::CombatStarted);
+        REQUIRE(event.type != CombatEventType::CombatFinished);
+        REQUIRE(event.type != CombatEventType::HeroAttacked);
+        REQUIRE(event.type != CombatEventType::TowerDamaged);
+        sawOpeningCompleted = sawOpeningCompleted || event.type == CombatEventType::OpeningTurnCompleted;
+    }
+    REQUIRE(sawOpeningCompleted);
+
+    player1.send(serialize(EliminateRequest{1, 2, findPlayerPath(player1Result->game.board, 1)}));
+    const auto player0Second = deserializeEliminateResult(player0.receive());
+    const auto player1Second = deserializeEliminateResult(player1.receive());
+    REQUIRE(player0Second.has_value());
+    REQUIRE(player1Second.has_value());
+    REQUIRE(player0Second->success);
+    REQUIRE(player0Second->game == player1Second->game);
+    REQUIRE(player0Second->combatEvents == player1Second->combatEvents);
+    REQUIRE(!player0Second->game.openingTurnPending);
+    REQUIRE(player0Second->game.currentPlayerId == 0);
+    REQUIRE(player0Second->game.turnId == 3);
 }
 
 } // namespace

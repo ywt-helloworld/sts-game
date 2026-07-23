@@ -6,6 +6,9 @@ void runBoardTests();
 void runHeroTests();
 void runProtocolTests();
 void runViewTransformTests();
+void runGuiClientTests();
+void runCombatTests();
+void runOpeningTurnTests();
 
 int main() {
     try {
@@ -14,6 +17,9 @@ int main() {
         runHeroTests();
         runProtocolTests();
         runViewTransformTests();
+        runGuiClientTests();
+        runCombatTests();
+        runOpeningTurnTests();
         std::cout << "All tests passed.\n";
         return 0;
     } catch (const std::exception& exception) {

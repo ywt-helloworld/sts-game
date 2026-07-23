@@ -1,6 +1,8 @@
 #include "game/BoxBoard.hpp"
 
 #include "game/Box.hpp"
+#include "common/PlayerArea.hpp"
+#include "game/Hero.hpp"
 #include "game/HeroFactory.hpp"
 
 #include <algorithm>
@@ -48,7 +50,22 @@ BoardSnapshot BoxBoard::snapshot() const {
             if (piece == nullptr) {
                 throw std::logic_error("a board snapshot cannot contain an empty cell");
             }
-            result[row][column] = PieceSnapshot{piece->type(), piece->color(), piece->position(), piece->inheritedAttribute()};
+            PieceSnapshot snapshot{piece->type(), piece->color(), piece->position(), piece->inheritedAttribute()};
+            if (const auto* hero = dynamic_cast<const Hero*>(piece); hero != nullptr) {
+                snapshot.heroId = hero->id();
+                snapshot.heroType = hero->heroType();
+                snapshot.currentHp = hero->currentHp();
+                snapshot.maxHp = hero->maxHp();
+                snapshot.currentBaseAttackDamage = hero->currentBaseAttackDamage();
+                snapshot.defense = hero->defense();
+                snapshot.shield = hero->shield();
+                snapshot.vulnerableLayers = hero->vulnerableLayers();
+                snapshot.weakLayers = hero->weakLayers();
+                snapshot.radiantStars = hero->radiantStars();
+                snapshot.lightningOrbs = hero->lightningOrbs();
+                snapshot.alive = hero->isAlive();
+            }
+            result[row][column] = snapshot;
         }
     }
     return result;
@@ -59,6 +76,9 @@ void BoxBoard::setPieceAt(Position position, std::unique_ptr<BoardPiece> piece) 
         throw std::invalid_argument("setPieceAt needs an in-board, non-null piece");
     }
     piece->setPosition(position);
+    if (const auto* hero = dynamic_cast<const Hero*>(piece.get()); hero != nullptr) {
+        nextHeroId_ = std::max(nextHeroId_, hero->id() + 1U);
+    }
     cells_[position.row][position.column] = std::move(piece);
 }
 
@@ -67,7 +87,27 @@ std::unique_ptr<BoardPiece> BoxBoard::generateBoxAt(Position position) {
     return std::make_unique<Box>(static_cast<PieceColor>(colorDistribution(random_)), position);
 }
 
-void BoxBoard::resolveElimination(int actingPlayerId, const std::vector<Position>& path) {
+EliminationValueResult BoxBoard::calculateEliminationValue(const std::vector<Position>& path) const {
+    EliminationValueResult result;
+    for (const Position position : path) {
+        const BoardPiece* piece = pieceAt(position);
+        if (piece == nullptr) {
+            throw std::logic_error("elimination path contains an empty position");
+        }
+        if (piece->type() == PieceType::Box) {
+            ++result.boxCount;
+        } else {
+            result.inheritedHeroValue += piece->inheritedAttribute();
+        }
+    }
+    result.totalAttributeValue = result.boxCount + result.inheritedHeroValue;
+    if (result.totalAttributeValue < 1) {
+        throw std::logic_error("elimination must produce a positive Hero attributeValue");
+    }
+    return result;
+}
+
+HeroId BoxBoard::resolveElimination(int actingPlayerId, const std::vector<Position>& path) {
     if (actingPlayerId != 0 && actingPlayerId != 1) {
         throw std::invalid_argument("actingPlayerId must be 0 or 1");
     }
@@ -81,23 +121,83 @@ void BoxBoard::resolveElimination(int actingPlayerId, const std::vector<Position
     }
 
     const PieceColor color = finalPiece->color();
-    int attribute = static_cast<int>(path.size()) * 10;
+    const EliminationValueResult value = calculateEliminationValue(path);
     for (const Position position : path) {
         BoardPiece* piece = pieceAt(position);
         if (piece == nullptr) {
             throw std::logic_error("elimination path contains an empty position");
         }
-        attribute += piece->inheritedAttribute();
         piece->onEliminated();
     }
     for (const Position position : path) {
         cells_[position.row][position.column].reset();
     }
-    setPieceAt(destination, HeroFactory::create(color, destination, attribute));
+    const HeroId heroId = nextHeroId_++;
+    setPieceAt(destination, HeroFactory::create(heroId, color, destination,
+                                                value.totalAttributeValue, actingPlayerId));
 
     // The new hero is deliberately not an anchor. It joins every other
     // BoardPiece in the direction selected by the acting player's logical side.
     collapseAndRefill(actingPlayerId, path);
+    return heroId;
+}
+
+Hero* BoxBoard::heroById(HeroId id) noexcept {
+    return const_cast<Hero*>(std::as_const(*this).heroById(id));
+}
+
+const Hero* BoxBoard::heroById(HeroId id) const noexcept {
+    for (const auto& row : cells_) {
+        for (const auto& piece : row) {
+            const auto* hero = dynamic_cast<const Hero*>(piece.get());
+            if (hero != nullptr && hero->id() == id) {
+                return hero;
+            }
+        }
+    }
+    return nullptr;
+}
+
+std::vector<HeroId> BoxBoard::livingHeroIdsForPlayer(int playerId) const {
+    std::vector<HeroId> ids;
+    for (const auto& row : cells_) {
+        for (const auto& piece : row) {
+            const auto* hero = dynamic_cast<const Hero*>(piece.get());
+            if (hero != nullptr && hero->isAlive() && playerIdForPosition(hero->position()) == playerId) {
+                ids.push_back(hero->id());
+            }
+        }
+    }
+    return ids;
+}
+
+std::vector<HeroId> BoxBoard::livingHeroIds() const {
+    std::vector<HeroId> ids;
+    for (const auto& row : cells_) {
+        for (const auto& piece : row) {
+            const auto* hero = dynamic_cast<const Hero*>(piece.get());
+            if (hero != nullptr && hero->isAlive()) {
+                ids.push_back(hero->id());
+            }
+        }
+    }
+    return ids;
+}
+
+std::vector<DeadHeroInfo> BoxBoard::convertDeadHeroesToBoxes() {
+    std::vector<DeadHeroInfo> converted;
+    for (int row = 0; row < RowCount; ++row) {
+        for (int column = 0; column < ColumnCount; ++column) {
+            auto* hero = dynamic_cast<Hero*>(cells_[row][column].get());
+            if (hero == nullptr || hero->isAlive()) {
+                continue;
+            }
+            const DeadHeroInfo info{hero->id(), hero->color(), {row, column}};
+            converted.push_back(info);
+            cells_[row][column] = std::make_unique<Box>(info.color, info.position);
+        }
+    }
+    return converted;
 }
 
 void BoxBoard::collapseAndRefill(int actingPlayerId, const std::vector<Position>& eliminatedPath) {
