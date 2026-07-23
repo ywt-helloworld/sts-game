@@ -1,5 +1,7 @@
 #include "game/Tower.hpp"
 
+#include "game/CombatMath.hpp"
+
 #include <algorithm>
 #include <stdexcept>
 
@@ -15,6 +17,23 @@ int Tower::takeDamage(int damage) noexcept {
     const int applied = std::min(currentHp_, std::max(0, damage));
     currentHp_ -= applied;
     return applied;
+}
+
+void Tower::addVulnerableLayers(int layers) {
+    if (layers > 0 && !isDestroyed()) {
+        vulnerableLayers_ = checkedAdd(vulnerableLayers_, layers);
+    }
+}
+
+void Tower::addWeakLayers(int layers) {
+    if (layers > 0 && !isDestroyed()) {
+        weakLayers_ = checkedAdd(weakLayers_, layers);
+    }
+}
+
+void Tower::processTurnEndStatuses() noexcept {
+    vulnerableLayers_ = std::max(0, vulnerableLayers_ - 1);
+    weakLayers_ = std::max(0, weakLayers_ - 1);
 }
 
 } // namespace sts

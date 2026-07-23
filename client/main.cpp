@@ -8,6 +8,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -48,14 +49,25 @@ std::string combatEventText(const CombatEvent& event) {
     case CombatEventType::HeroAttacked: return attacker + " 攻击 " + target;
     case CombatEventType::HeroDamaged:
         return target + " 生命伤害 " + std::to_string(event.damage) +
-               "，剩余生命 " + std::to_string(event.remainingHp) +
-               (event.overkillDamage > 0 ? "，过量伤害 " + std::to_string(event.overkillDamage) : "");
+               "，剩余生命 " + std::to_string(event.remainingHp);
     case CombatEventType::VulnerableApplied:
+        if (event.targetType == CombatTargetType::Tower &&
+            event.redirectedBecauseHeroDied) {
+            return attacker + " 击杀目标，" + std::to_string(event.addedLayers) +
+                   " 层易伤转移至敌方高塔（共 " +
+                   std::to_string(event.totalLayers) + " 层）";
+        }
         return target + " 易伤 " + std::to_string(event.previousLayers) + " + " +
                std::to_string(event.addedLayers) + " = " + std::to_string(event.totalLayers);
     case CombatEventType::VulnerableReduced: return target + " 易伤降为 " + std::to_string(event.vulnerableLayers);
     case CombatEventType::VulnerableExpired: return target + " 易伤结束";
     case CombatEventType::WeakApplied:
+        if (event.targetType == CombatTargetType::Tower &&
+            event.redirectedBecauseHeroDied) {
+            return attacker + " 击杀目标，" + std::to_string(event.addedLayers) +
+                   " 层虚弱转移至敌方高塔（共 " +
+                   std::to_string(event.totalLayers) + " 层）";
+        }
         return target + " 虚弱 " + std::to_string(event.previousLayers) + " + " +
                std::to_string(event.addedLayers) + " = " + std::to_string(event.totalLayers);
     case CombatEventType::WeakReduced: return target + " 虚弱降为 " + std::to_string(event.weakLayers);
@@ -71,8 +83,16 @@ std::string combatEventText(const CombatEvent& event) {
     case CombatEventType::LightningTargetSelected: return "闪电选择 " + target;
     case CombatEventType::LightningOrbChanged: return attacker + " 闪电球变为 " + std::to_string(event.lightningOrbs);
     case CombatEventType::HeroDied: return target + " 阵亡";
+    case CombatEventType::OverflowDamageGenerated:
+        return "对英雄造成 " + std::to_string(event.calculatedDamage) +
+               " 点结算伤害，其中 " + std::to_string(event.overflowDamage) +
+               " 点溢出至高塔";
     case CombatEventType::HeroConvertedToBox: return target + " 转回方格";
-    case CombatEventType::TowerDamaged: return "高塔受到 " + std::to_string(event.damage) + " 伤害";
+    case CombatEventType::TowerDamaged:
+        return std::string(event.towerDamageSource == TowerDamageSource::Overflow
+                               ? "高塔受到溢出伤害 "
+                               : "高塔受到直接伤害 ") +
+               std::to_string(event.towerDamageApplied);
     case CombatEventType::TowerDestroyed: return "高塔被摧毁";
     case CombatEventType::CombatFinished: return "战斗结算完成";
     case CombatEventType::TurnChanged: return "回合切换";
@@ -86,13 +106,28 @@ void print(const std::shared_ptr<ClientState>& state, const std::string& text) {
     std::cout << text << std::flush;
 }
 
-void printBoard(const std::shared_ptr<ClientState>& state, const BoardSnapshot& board) {
+void printBoard(const std::shared_ptr<ClientState>& state, const GameSnapshot& game) {
     int playerId{};
     {
         std::lock_guard lock(state->mutex);
         playerId = state->playerId;
     }
+    const BoardSnapshot& board = game.board;
     std::ostringstream output;
+    const TowerSnapshot& ownTower = game.towers[static_cast<std::size_t>(playerId)];
+    const TowerSnapshot& enemyTower = game.towers[static_cast<std::size_t>(1 - playerId)];
+    const auto printTower = [&output](std::string_view label, const TowerSnapshot& tower) {
+        output << label << "：" << tower.currentHp << " / " << tower.maxHp;
+        if (tower.vulnerableLayers > 0) {
+            output << "  易伤：" << tower.vulnerableLayers;
+        }
+        if (tower.weakLayers > 0) {
+            output << "  虚弱：" << tower.weakLayers;
+        }
+        output << '\n';
+    };
+    printTower("敌方高塔", enemyTower);
+    printTower("己方高塔", ownTower);
     output << "上方：对方区域\n      ";
     for (int column = 0; column < BoardColumns; ++column) {
         output << column << "  ";
@@ -223,7 +258,7 @@ void handleMessage(const std::shared_ptr<ClientState>& state, const std::string&
             state->openingTurnPending = started->game.openingTurnPending;
         }
         print(state, "游戏开始。\n");
-        printBoard(state, started->game.board);
+        printBoard(state, started->game);
         announceTurn(state);
         return;
     }
@@ -247,7 +282,7 @@ void handleMessage(const std::shared_ptr<ClientState>& state, const std::string&
             print(state, "  " + std::to_string(index + 1U) + ". " +
                          combatEventText(result->combatEvents[index]) + "\n");
         }
-        printBoard(state, result->game.board);
+        printBoard(state, result->game);
         announceTurn(state);
         if (result->game.phase == GamePhase::Finished) {
             stop(state);

@@ -39,8 +39,16 @@ void copyDamage(CombatEvent& event, const DamageResult& result, DamageKind kind)
     event.remainingHp = result.remainingHp;
     event.calculatedDamage = result.calculatedDamage;
     event.hpDamageApplied = result.hpDamageApplied;
-    event.overkillDamage = result.overkillDamage;
     event.targetRemainingHp = result.targetRemainingHp;
+    event.shieldBefore = result.shieldBefore;
+    event.shieldAfter = result.shieldAfter;
+    event.hpBefore = result.hpBefore;
+    event.hpAfter = result.hpAfter;
+    event.overflowDamage = result.overflowDamage;
+    event.towerHpBefore = result.towerHpBefore;
+    event.towerDamageApplied = result.towerDamageApplied;
+    event.towerHpAfter = result.towerHpAfter;
+    event.towerDestroyed = result.towerDestroyed;
 }
 
 } // namespace
@@ -136,7 +144,7 @@ DamageResult CombatContext::damageHero(HeroId attackerId,
     attacked.remainingShield = target->shield();
     emitEvent(std::move(attacked));
 
-    const DamageResult result = damageResolver_.resolveHeroDamage(*attacker, *target, baseDamage, kind);
+    DamageResult result = damageResolver_.resolveHeroDamage(*attacker, *target, baseDamage, kind);
     if (result.shieldAbsorbed > 0) {
         CombatEvent absorbed = baseEvent(CombatEventType::ShieldAbsorbed, attackerId, targetId,
                                          actingPlayerId_, defendingPlayerId());
@@ -161,6 +169,49 @@ DamageResult CombatContext::damageHero(HeroId attackerId,
         copyDamage(died, result, kind);
         emitEvent(std::move(died));
     }
+
+    if (result.overflowDamage > 0) {
+        Tower& tower = towers_[static_cast<std::size_t>(defendingPlayerId())];
+        result.towerHpBefore = tower.currentHp();
+        result.towerDamageApplied = tower.takeDamage(result.overflowDamage);
+        result.towerHpAfter = tower.currentHp();
+        result.towerDestroyed = tower.isDestroyed();
+
+        CombatEvent overflow = baseEvent(CombatEventType::OverflowDamageGenerated,
+                                         attackerId, targetId,
+                                         actingPlayerId_, defendingPlayerId());
+        copyDamage(overflow, result, kind);
+        overflow.amount = result.overflowDamage;
+        overflow.towerDamageSource = TowerDamageSource::Overflow;
+        emitEvent(std::move(overflow));
+
+        CombatEvent towerDamaged = baseEvent(CombatEventType::TowerDamaged,
+                                             attackerId, std::nullopt,
+                                             actingPlayerId_, defendingPlayerId());
+        copyDamage(towerDamaged, result, kind);
+        towerDamaged.towerDamageSource = TowerDamageSource::Overflow;
+        towerDamaged.damage = result.towerDamageApplied;
+        towerDamaged.remainingHp = result.towerHpAfter;
+        towerDamaged.targetRemainingHp = result.towerHpAfter;
+        emitEvent(std::move(towerDamaged));
+
+        if (result.towerDestroyed) {
+            CombatEvent destroyed = baseEvent(CombatEventType::TowerDestroyed,
+                                              attackerId, std::nullopt,
+                                              actingPlayerId_, defendingPlayerId());
+            copyDamage(destroyed, result, kind);
+            destroyed.towerDamageSource = TowerDamageSource::Overflow;
+            destroyed.damage = result.towerDamageApplied;
+            destroyed.remainingHp = result.towerHpAfter;
+            destroyed.targetRemainingHp = result.towerHpAfter;
+            destroyed.winnerPlayerId = actingPlayerId_;
+            emitEvent(std::move(destroyed));
+        }
+    }
+
+    if (result.targetDied) {
+        convertDeadHeroesToBoxes();
+    }
     return result;
 }
 
@@ -178,11 +229,19 @@ DamageResult CombatContext::damageTower(HeroId attackerId,
     CombatEvent damaged = baseEvent(CombatEventType::TowerDamaged, attackerId, std::nullopt,
                                     actingPlayerId_, defendingPlayerId());
     copyDamage(damaged, result, kind);
+    damaged.towerDamageSource = TowerDamageSource::DirectAttack;
+    damaged.damage = result.towerDamageApplied;
+    damaged.remainingHp = result.towerHpAfter;
+    damaged.targetRemainingHp = result.towerHpAfter;
     emitEvent(std::move(damaged));
     if (tower.isDestroyed()) {
         CombatEvent destroyed = baseEvent(CombatEventType::TowerDestroyed, attackerId, std::nullopt,
                                           actingPlayerId_, defendingPlayerId());
         copyDamage(destroyed, result, kind);
+        destroyed.towerDamageSource = TowerDamageSource::DirectAttack;
+        destroyed.damage = result.towerDamageApplied;
+        destroyed.remainingHp = result.towerHpAfter;
+        destroyed.targetRemainingHp = result.towerHpAfter;
         destroyed.winnerPlayerId = actingPlayerId_;
         emitEvent(std::move(destroyed));
     }
@@ -203,6 +262,76 @@ LightningTarget CombatContext::chooseRandomLightningTarget() {
     return candidates[random_.chooseIndex(candidates.size())];
 }
 
+void CombatContext::applyDebuffAfterHeroHit(HeroId sourceHeroId,
+                                            HeroId originalTargetHeroId,
+                                            const DamageResult& damageResult,
+                                            const TargetDebuff& debuff) {
+    if (!isValidLivingAttacker(sourceHeroId) ||
+        (debuff.vulnerableLayers <= 0 && debuff.weakLayers <= 0)) {
+        return;
+    }
+
+    if (!damageResult.targetDied) {
+        if (debuff.vulnerableLayers > 0) {
+            addVulnerable(sourceHeroId, originalTargetHeroId, debuff.vulnerableLayers);
+        }
+        if (debuff.weakLayers > 0) {
+            addWeak(sourceHeroId, originalTargetHeroId, debuff.weakLayers);
+        }
+        return;
+    }
+
+    Tower& tower = towers_[static_cast<std::size_t>(defendingPlayerId())];
+    if (damageResult.towerDestroyed || tower.isDestroyed()) {
+        return;
+    }
+
+    if (debuff.vulnerableLayers > 0) {
+        const int previousLayers = tower.vulnerableLayers();
+        tower.addVulnerableLayers(debuff.vulnerableLayers);
+        CombatEvent event = baseEvent(CombatEventType::VulnerableApplied,
+                                      sourceHeroId, std::nullopt,
+                                      actingPlayerId_, defendingPlayerId());
+        event.targetType = CombatTargetType::Tower;
+        event.targetTowerPlayerId = defendingPlayerId();
+        event.redirectedBecauseHeroDied = true;
+        event.amount = debuff.vulnerableLayers;
+        event.vulnerableLayers = tower.vulnerableLayers();
+        event.previousLayers = previousLayers;
+        event.addedLayers = debuff.vulnerableLayers;
+        event.totalLayers = tower.vulnerableLayers();
+        emitEvent(std::move(event));
+    }
+
+    if (debuff.weakLayers > 0) {
+        const int previousLayers = tower.weakLayers();
+        tower.addWeakLayers(debuff.weakLayers);
+        CombatEvent event = baseEvent(CombatEventType::WeakApplied,
+                                      sourceHeroId, std::nullopt,
+                                      actingPlayerId_, defendingPlayerId());
+        event.targetType = CombatTargetType::Tower;
+        event.targetTowerPlayerId = defendingPlayerId();
+        event.redirectedBecauseHeroDied = true;
+        event.amount = debuff.weakLayers;
+        event.weakLayers = tower.weakLayers();
+        event.previousLayers = previousLayers;
+        event.addedLayers = debuff.weakLayers;
+        event.totalLayers = tower.weakLayers();
+        emitEvent(std::move(event));
+    }
+}
+
+void CombatContext::convertDeadHeroesToBoxes() {
+    for (const DeadHeroInfo& dead : board_.convertDeadHeroesToBoxes()) {
+        CombatEvent converted;
+        converted.type = CombatEventType::HeroConvertedToBox;
+        converted.targetHeroId = dead.id;
+        converted.actingPlayerId = actingPlayerId_;
+        converted.targetPlayerId = playerIdForPosition(dead.position);
+        emitEvent(std::move(converted));
+    }
+}
+
 void CombatContext::addVulnerable(HeroId attackerId, HeroId targetId, int layers) {
     Hero* target = findHero(targetId);
     if (!isValidLivingAttacker(attackerId) || target == nullptr || !isValidLivingEnemy(targetId) || layers <= 0) {
@@ -213,6 +342,7 @@ void CombatContext::addVulnerable(HeroId attackerId, HeroId targetId, int layers
     CombatEvent event = baseEvent(CombatEventType::VulnerableApplied, attackerId, targetId,
                                   actingPlayerId_, defendingPlayerId());
     event.amount = layers;
+    event.targetType = CombatTargetType::Hero;
     event.vulnerableLayers = target->vulnerableLayers();
     event.previousLayers = previousLayers;
     event.addedLayers = layers;
@@ -230,6 +360,7 @@ void CombatContext::addWeak(HeroId attackerId, HeroId targetId, int layers) {
     CombatEvent event = baseEvent(CombatEventType::WeakApplied, attackerId, targetId,
                                   actingPlayerId_, defendingPlayerId());
     event.amount = layers;
+    event.targetType = CombatTargetType::Hero;
     event.weakLayers = target->weakLayers();
     event.previousLayers = previousLayers;
     event.addedLayers = layers;

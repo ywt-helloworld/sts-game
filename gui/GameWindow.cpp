@@ -6,7 +6,9 @@
 namespace sts {
 
 GameWindow::GameWindow()
-    : window_(sf::VideoMode({2000U, 1500U}), "STS Match - Graphical Client", sf::Style::Default) {
+    : window_(sf::VideoMode::getDesktopMode(),
+              "STS Match - Graphical Client",
+              sf::Style::Default) {
     window_.setFramerateLimit(60U);
 }
 

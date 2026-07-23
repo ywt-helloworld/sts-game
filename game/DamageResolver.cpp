@@ -18,6 +18,7 @@ DamageResult DamageResolver::resolveHeroDamage(Hero& attacker,
     }
 
     DamageResult result;
+    result.damageKind = kind;
     result.baseDamage = baseDamage;
     result.damageAfterWeak = kind == DamageKind::NormalAttack && attacker.isWeak()
                                  ? roundPositiveRatio(baseDamage, 3, 4)
@@ -28,17 +29,20 @@ DamageResult DamageResolver::resolveHeroDamage(Hero& attacker,
     result.damageAfterDefense = std::max(1, result.damageAfterVulnerable - target.defense());
     result.calculatedDamage = result.damageAfterDefense;
 
-    result.shieldAbsorbed = std::min(target.status_.shield, result.damageAfterDefense);
+    result.shieldBefore = target.status_.shield;
+    result.hpBefore = target.currentHp_;
+    result.shieldAbsorbed = std::min(result.shieldBefore, result.damageAfterDefense);
     target.status_.shield -= result.shieldAbsorbed;
     const int unshieldedDamage = result.damageAfterDefense - result.shieldAbsorbed;
-    const int targetHpBeforeDamage = target.currentHp_;
-    result.hpDamageApplied = std::min(targetHpBeforeDamage, unshieldedDamage);
-    result.overkillDamage = std::max(0, unshieldedDamage - targetHpBeforeDamage);
+    result.hpDamageApplied = std::min(result.hpBefore, unshieldedDamage);
+    result.overflowDamage = std::max(0, unshieldedDamage - result.hpBefore);
     target.currentHp_ -= result.hpDamageApplied;
     result.hpDamage = result.hpDamageApplied;
     result.remainingShield = target.status_.shield;
     result.remainingHp = target.currentHp_;
     result.targetRemainingHp = result.remainingHp;
+    result.shieldAfter = result.remainingShield;
+    result.hpAfter = result.remainingHp;
     result.targetDied = !target.isAlive();
     return result;
 }
@@ -52,19 +56,24 @@ DamageResult DamageResolver::resolveTowerDamage(Hero& attacker,
     }
 
     DamageResult result;
+    result.damageKind = kind;
     result.baseDamage = baseDamage;
     result.damageAfterWeak = kind == DamageKind::NormalAttack && attacker.isWeak()
                                  ? roundPositiveRatio(baseDamage, 3, 4)
                                  : baseDamage;
-    result.damageAfterVulnerable = result.damageAfterWeak;
+    result.damageAfterVulnerable = tower.isVulnerable()
+                                       ? roundPositiveRatio(result.damageAfterWeak, 3, 2)
+                                       : result.damageAfterWeak;
     result.damageAfterDefense = result.damageAfterVulnerable;
     result.calculatedDamage = result.damageAfterDefense;
-    const int towerHpBeforeDamage = tower.currentHp();
+    result.towerHpBefore = tower.currentHp();
     result.hpDamageApplied = tower.takeDamage(result.damageAfterDefense);
-    result.overkillDamage = std::max(0, result.damageAfterDefense - towerHpBeforeDamage);
     result.hpDamage = result.hpDamageApplied;
     result.remainingHp = tower.currentHp();
     result.targetRemainingHp = result.remainingHp;
+    result.towerDamageApplied = result.hpDamageApplied;
+    result.towerHpAfter = result.remainingHp;
+    result.towerDestroyed = tower.isDestroyed();
     result.targetDied = tower.isDestroyed();
     return result;
 }

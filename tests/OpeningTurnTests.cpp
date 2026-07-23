@@ -59,6 +59,7 @@ void requireNoCombatEvents(const EliminateResult& result) {
         CombatEventType::LightningTargetSelected,
         CombatEventType::LightningOrbChanged,
         CombatEventType::HeroDied,
+        CombatEventType::OverflowDamageGenerated,
         CombatEventType::TowerDamaged,
         CombatEventType::TowerDestroyed,
         CombatEventType::CombatFinished,

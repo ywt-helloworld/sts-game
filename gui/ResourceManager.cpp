@@ -11,6 +11,8 @@
 #include <filesystem>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace sts {
@@ -70,6 +72,12 @@ ResourceManager::ResourceManager() {
         textureSet.selected = loadBoxTexture(pieceColor, true);
         heroTextures_[static_cast<std::size_t>(color)] = loadHeroTexture(pieceColor);
     }
+    for (int status = static_cast<int>(StatusIconKind::Vulnerable);
+         status <= static_cast<int>(StatusIconKind::Shield);
+         ++status) {
+        const auto kind = static_cast<StatusIconKind>(status);
+        statusTextures_[static_cast<std::size_t>(status)] = loadStatusTexture(kind);
+    }
     loadBackgroundTexture();
 }
 
@@ -89,6 +97,11 @@ const BoxTextureSet& ResourceManager::texturesFor(PieceColor color) const noexce
 const sf::Texture* ResourceManager::heroTextureFor(PieceColor color) const noexcept {
     const auto index = static_cast<std::size_t>(color);
     return heroTextures_[index < heroTextures_.size() ? index : 0U];
+}
+
+const sf::Texture* ResourceManager::statusTextureFor(StatusIconKind kind) const noexcept {
+    const auto index = static_cast<std::size_t>(kind);
+    return statusTextures_[index < statusTextures_.size() ? index : 0U];
 }
 
 const sf::Texture* ResourceManager::loadBoxTexture(PieceColor color, bool selected) {
@@ -147,6 +160,39 @@ const sf::Texture* ResourceManager::loadHeroTexture(PieceColor color) {
     if (!texture->loadFromFile(*path)) {
         std::cerr << "Failed to load hero texture: " << path->string() << '\n';
         return nullptr;
+    }
+    texture->setSmooth(true);
+    const sf::Texture* result = texture.get();
+    ownedTextures_.push_back(std::move(texture));
+    return result;
+}
+
+const sf::Texture* ResourceManager::loadStatusTexture(StatusIconKind kind) {
+    const std::filesystem::path workingDirectory = std::filesystem::current_path();
+    const std::vector<std::filesystem::path> searchDirectories{
+        workingDirectory / "assets" / "status",
+        workingDirectory.parent_path() / "assets" / "status",
+    };
+    const auto path = findStatusTextureFile(kind, searchDirectories);
+    if (!path.has_value()) {
+        std::string message = "Status texture not found: ";
+        message += statusTextureFilename(kind);
+        message += " (searched";
+        for (const auto& directory : searchDirectories) {
+            message += " ";
+            message += std::filesystem::absolute(directory / statusTextureFilename(kind))
+                           .lexically_normal()
+                           .string();
+        }
+        message += ")";
+        throw std::runtime_error(message);
+    }
+
+    auto texture = std::make_unique<sf::Texture>();
+    if (!texture->loadFromFile(*path)) {
+        throw std::runtime_error(
+            "Failed to load status texture: " +
+            std::filesystem::absolute(*path).lexically_normal().string());
     }
     texture->setSmooth(true);
     const sf::Texture* result = texture.get();

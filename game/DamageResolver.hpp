@@ -8,6 +8,7 @@ class Hero;
 class Tower;
 
 struct DamageResult {
+    DamageKind damageKind{DamageKind::NormalAttack};
     int baseDamage{};
     int damageAfterWeak{};
     int damageAfterVulnerable{};
@@ -19,8 +20,16 @@ struct DamageResult {
     bool targetDied{};
     int calculatedDamage{};
     int hpDamageApplied{};
-    int overkillDamage{};
     int targetRemainingHp{};
+    int shieldBefore{};
+    int shieldAfter{};
+    int hpBefore{};
+    int hpAfter{};
+    int overflowDamage{};
+    int towerHpBefore{};
+    int towerDamageApplied{};
+    int towerHpAfter{};
+    bool towerDestroyed{};
 };
 
 class DamageResolver {

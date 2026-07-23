@@ -38,6 +38,9 @@ void runProtocolTests() {
                           {TowerSnapshot{0, 900, Tower::MaxHp}, TowerSnapshot{1, 750, Tower::MaxHp}},
                           board.snapshot()};
     snapshot.openingTurnPending = false;
+    snapshot.towers[0].vulnerableLayers = 3;
+    snapshot.towers[0].weakLayers = 2;
+    snapshot.towers[1].destroyed = false;
 
     CombatEvent started;
     started.type = CombatEventType::CombatStarted;
@@ -61,8 +64,32 @@ void runProtocolTests() {
     damaged.remainingShield = 0;
     damaged.calculatedDamage = 18;
     damaged.hpDamageApplied = 7;
-    damaged.overkillDamage = 6;
     damaged.targetRemainingHp = 0;
+    damaged.shieldBefore = 5;
+    damaged.shieldAfter = 0;
+    damaged.hpBefore = 7;
+    damaged.hpAfter = 0;
+    damaged.overflowDamage = 6;
+
+    CombatEvent overflow;
+    overflow.type = CombatEventType::OverflowDamageGenerated;
+    overflow.attackerHeroId = 77;
+    overflow.targetHeroId = 88;
+    overflow.actingPlayerId = 0;
+    overflow.targetPlayerId = 1;
+    overflow.damageKind = DamageKind::Lightning;
+    overflow.calculatedDamage = 18;
+    overflow.shieldBefore = 5;
+    overflow.shieldAbsorbed = 5;
+    overflow.shieldAfter = 0;
+    overflow.hpBefore = 7;
+    overflow.hpDamageApplied = 7;
+    overflow.hpAfter = 0;
+    overflow.overflowDamage = 6;
+    overflow.towerHpBefore = 750;
+    overflow.towerDamageApplied = 6;
+    overflow.towerHpAfter = 744;
+    overflow.towerDamageSource = TowerDamageSource::Overflow;
 
     CombatEvent status;
     status.type = CombatEventType::WeakApplied;
@@ -88,6 +115,20 @@ void runProtocolTests() {
     vulnerable.addedLayers = 1;
     vulnerable.totalLayers = 3;
 
+    CombatEvent redirectedVulnerable;
+    redirectedVulnerable.type = CombatEventType::VulnerableApplied;
+    redirectedVulnerable.attackerHeroId = 77;
+    redirectedVulnerable.actingPlayerId = 0;
+    redirectedVulnerable.targetPlayerId = 1;
+    redirectedVulnerable.targetType = CombatTargetType::Tower;
+    redirectedVulnerable.targetTowerPlayerId = 1;
+    redirectedVulnerable.redirectedBecauseHeroDied = true;
+    redirectedVulnerable.amount = 3;
+    redirectedVulnerable.previousLayers = 2;
+    redirectedVulnerable.addedLayers = 3;
+    redirectedVulnerable.totalLayers = 5;
+    redirectedVulnerable.vulnerableLayers = 5;
+
     CombatEvent stars;
     stars.type = CombatEventType::RadiantStarsChanged;
     stars.attackerHeroId = 78;
@@ -100,7 +141,8 @@ void runProtocolTests() {
     orbs.amount = -1;
     orbs.lightningOrbs = 0;
 
-    const std::vector<CombatEvent> events{started, damaged, status, vulnerable, stars, orbs};
+    const std::vector<CombatEvent> events{
+        started, damaged, overflow, status, vulnerable, redirectedVulnerable, stars, orbs};
     const EliminateResult result{true, "", snapshot, events};
     const auto decodedResult = deserializeEliminateResult(serialize(result));
     REQUIRE(decodedResult.has_value());

@@ -14,6 +14,11 @@ class CombatRandom;
 class Hero;
 class Tower;
 
+struct TargetDebuff {
+    int vulnerableLayers{};
+    int weakLayers{};
+};
+
 class CombatContext {
 public:
     CombatContext(int actingPlayerId,
@@ -37,6 +42,10 @@ public:
                                            int baseDamage,
                                            DamageKind kind);
     [[nodiscard]] LightningTarget chooseRandomLightningTarget();
+    void applyDebuffAfterHeroHit(HeroId sourceHeroId,
+                                 HeroId originalTargetHeroId,
+                                 const DamageResult& damageResult,
+                                 const TargetDebuff& debuff);
     void addVulnerable(HeroId attackerId, HeroId targetId, int layers);
     void addWeak(HeroId attackerId, HeroId targetId, int layers);
     [[nodiscard]] int healHero(HeroId heroId, int amount);
@@ -45,6 +54,7 @@ public:
     [[nodiscard]] bool gameFinished() const noexcept;
 
 private:
+    void convertDeadHeroesToBoxes();
     [[nodiscard]] bool isValidLivingAttacker(HeroId attackerId) const noexcept;
     [[nodiscard]] bool isValidLivingEnemy(HeroId targetId) const noexcept;
 

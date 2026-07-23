@@ -5,6 +5,7 @@
 #include "gui/HeroRenderer.hpp"
 #include "gui/InputController.hpp"
 #include "gui/ResourceManager.hpp"
+#include "gui/StatusEffectRenderer.hpp"
 
 #include <SFML/Graphics/Rect.hpp>
 #include <SFML/Graphics/RenderWindow.hpp>
@@ -26,6 +27,7 @@ public:
 private:
     ResourceManager resources_;
     HeroRenderer heroRenderer_;
+    StatusEffectRenderer statusRenderer_;
 };
 
 } // namespace sts

@@ -83,15 +83,26 @@ std::string combatEventText(const CombatEvent& event) {
         return attacker + " 攻击 " + target;
     case CombatEventType::HeroDamaged:
         return target + " 生命伤害 " + std::to_string(event.damage) +
-               "，剩余 " + std::to_string(event.remainingHp) +
-               (event.overkillDamage > 0 ? "，过量 " + std::to_string(event.overkillDamage) : "");
+               "，剩余 " + std::to_string(event.remainingHp);
     case CombatEventType::VulnerableApplied:
+        if (event.targetType == CombatTargetType::Tower &&
+            event.redirectedBecauseHeroDied) {
+            return attacker + " 击杀目标，" + std::to_string(event.addedLayers) +
+                   " 层易伤转移至敌方高塔（共 " +
+                   std::to_string(event.totalLayers) + " 层）";
+        }
         return target + " 易伤 " + std::to_string(event.previousLayers) + " + " +
                std::to_string(event.addedLayers) + " = " + std::to_string(event.totalLayers);
     case CombatEventType::VulnerableReduced:
         return target + " 易伤降为 " + std::to_string(event.vulnerableLayers);
     case CombatEventType::VulnerableExpired: return target + " 易伤结束";
     case CombatEventType::WeakApplied:
+        if (event.targetType == CombatTargetType::Tower &&
+            event.redirectedBecauseHeroDied) {
+            return attacker + " 击杀目标，" + std::to_string(event.addedLayers) +
+                   " 层虚弱转移至敌方高塔（共 " +
+                   std::to_string(event.totalLayers) + " 层）";
+        }
         return target + " 虚弱 " + std::to_string(event.previousLayers) + " + " +
                std::to_string(event.addedLayers) + " = " + std::to_string(event.totalLayers);
     case CombatEventType::WeakReduced:
@@ -116,9 +127,16 @@ std::string combatEventText(const CombatEvent& event) {
     case CombatEventType::LightningOrbChanged:
         return attacker + " 闪电球变为 " + std::to_string(event.lightningOrbs);
     case CombatEventType::HeroDied: return target + " 阵亡";
+    case CombatEventType::OverflowDamageGenerated:
+        return "对英雄造成 " + std::to_string(event.calculatedDamage) +
+               " 点结算伤害，其中 " + std::to_string(event.overflowDamage) +
+               " 点溢出至高塔";
     case CombatEventType::HeroConvertedToBox: return target + " 转回方格";
     case CombatEventType::TowerDamaged:
-        return "高塔受到 " + std::to_string(event.damage) + " 伤害";
+        return std::string(event.towerDamageSource == TowerDamageSource::Overflow
+                               ? "高塔受到溢出伤害 "
+                               : "高塔受到直接伤害 ") +
+               std::to_string(event.towerDamageApplied);
     case CombatEventType::TowerDestroyed: return "高塔被摧毁";
     case CombatEventType::CombatFinished: return "战斗结算完成";
     case CombatEventType::TurnChanged: return "回合切换";
@@ -165,7 +183,8 @@ void drawTowerBar(sf::RenderWindow& window,
 
 } // namespace
 
-BoardRenderer::BoardRenderer() : heroRenderer_(resources_) {}
+BoardRenderer::BoardRenderer()
+    : heroRenderer_(resources_), statusRenderer_(resources_) {}
 
 sf::FloatRect BoardRenderer::confirmButtonBounds(const sf::RenderWindow& window) const noexcept {
     const auto size = window.getSize();
@@ -370,6 +389,12 @@ void BoardRenderer::draw(sf::RenderWindow& window,
         drawTowerBar(window, enemyTower,
                      {geometry.left + geometry.boardWidth() + 18.0F, geometry.top + 68.0F},
                      sf::Color{192, 64, 64, 230});
+        statusRenderer_.drawTowerStatuses(
+            window,
+            enemyTower,
+            {{geometry.left + geometry.boardWidth() + 18.0F, geometry.top + 88.0F},
+             {170.0F, 30.0F}},
+            font);
         drawText(window, font,
                  "己方高塔：" + std::to_string(ownTower.currentHp) + " / " + std::to_string(ownTower.maxHp),
                  17U, {geometry.left + geometry.boardWidth() + 18.0F, dividerY + 60.0F},
@@ -377,13 +402,19 @@ void BoardRenderer::draw(sf::RenderWindow& window,
         drawTowerBar(window, ownTower,
                      {geometry.left + geometry.boardWidth() + 18.0F, dividerY + 86.0F},
                      sf::Color{52, 159, 185, 230});
+        statusRenderer_.drawTowerStatuses(
+            window,
+            ownTower,
+            {{geometry.left + geometry.boardWidth() + 18.0F, dividerY + 106.0F},
+             {170.0F, 30.0F}},
+            font);
     }
 
     if (!input.path().empty() && state.board.has_value() && state.playerId >= 0) {
         const Position logical = PlayerViewTransform::displayToLogical(state.playerId, input.path().back());
         const PieceSnapshot& selectedPiece = (*state.board)[logical.row][logical.column];
         if (selectedPiece.type == PieceType::Hero) {
-            const sf::Vector2f detailsPosition{geometry.left + geometry.boardWidth() + 18.0F, dividerY + 118.0F};
+            const sf::Vector2f detailsPosition{geometry.left + geometry.boardWidth() + 18.0F, dividerY + 142.0F};
             drawText(window, font, heroName(selectedPiece.heroType),
                      16U, detailsPosition, sf::Color{238, 220, 176});
             drawText(window, font, "属性值：" + std::to_string(selectedPiece.attributeValue),

@@ -6,6 +6,8 @@
 #include "gui/ClientGameState.hpp"
 #include "gui/HeroTextureCatalog.hpp"
 #include "gui/InputController.hpp"
+#include "gui/ResourceManager.hpp"
+#include "gui/StatusEffectDisplay.hpp"
 #include "gui/ThreadSafeMessageQueue.hpp"
 
 #include <filesystem>
@@ -139,11 +141,23 @@ void stateAndQueueTests() {
     state.setPlayerId(0);
     REQUIRE(state.phase == ClientConnectionPhase::Connected);
     const BoardSnapshot board = makeBoard();
-    state.apply(GameStartedMessage{makeGameSnapshot(board, 0, 2)});
+    GameSnapshot startedSnapshot = makeGameSnapshot(board, 0, 2);
+    startedSnapshot.towers[1].vulnerableLayers = 3;
+    startedSnapshot.towers[1].weakLayers = 2;
+    state.apply(GameStartedMessage{startedSnapshot});
     REQUIRE(state.phase == ClientConnectionPhase::Playing);
     REQUIRE(state.board == board);
+    REQUIRE(state.towers[1].vulnerableLayers == 3);
+    REQUIRE(state.towers[1].weakLayers == 2);
     REQUIRE(state.canSelect());
     REQUIRE(state.status == "消除阶段：轮到你");
+
+    ClientGameState opponentState;
+    opponentState.setPlayerId(1);
+    opponentState.apply(GameStartedMessage{startedSnapshot});
+    REQUIRE(opponentState.towers == state.towers);
+    REQUIRE(opponentState.towers[1].vulnerableLayers == 3);
+    REQUIRE(opponentState.towers[1].weakLayers == 2);
 
     GameSnapshot openingSnapshot = makeGameSnapshot(board, 0, 1);
     openingSnapshot.openingTurnPending = true;
@@ -323,6 +337,89 @@ void heroTextureTests() {
     REQUIRE(!findHeroTextureFile(PieceColor::Red, missingRoots).has_value());
 }
 
+void statusEffectDisplayTests() {
+    REQUIRE(statusTextureFilename(StatusIconKind::Vulnerable) == "vulnerable.png");
+    REQUIRE(statusTextureFilename(StatusIconKind::Weak) == "weak.png");
+    REQUIRE(statusTextureFilename(StatusIconKind::Shield) == "shield.png");
+
+    ResourceManager resources;
+    for (const StatusIconKind kind :
+         {StatusIconKind::Vulnerable, StatusIconKind::Weak, StatusIconKind::Shield}) {
+        const sf::Texture* texture = resources.statusTextureFor(kind);
+        REQUIRE(texture != nullptr);
+        REQUIRE(texture->getSize().x > 0U);
+        REQUIRE(texture->getSize().y > 0U);
+    }
+
+    PieceSnapshot hero;
+    hero.type = PieceType::Hero;
+    REQUIRE(heroStatusDisplayItems(hero).empty());
+
+    hero.vulnerableLayers = 3;
+    REQUIRE(heroStatusDisplayItems(hero) ==
+            std::vector<StatusDisplayItem>({{StatusIconKind::Vulnerable, 3}}));
+    hero.vulnerableLayers = 0;
+    hero.weakLayers = 2;
+    REQUIRE(heroStatusDisplayItems(hero) ==
+            std::vector<StatusDisplayItem>({{StatusIconKind::Weak, 2}}));
+    hero.weakLayers = 0;
+    hero.shield = 64;
+    REQUIRE(heroStatusDisplayItems(hero) ==
+            std::vector<StatusDisplayItem>({{StatusIconKind::Shield, 64}}));
+
+    hero.vulnerableLayers = 3;
+    hero.weakLayers = 2;
+    const std::vector<StatusDisplayItem> allHeroItems = heroStatusDisplayItems(hero);
+    REQUIRE(allHeroItems ==
+            std::vector<StatusDisplayItem>({
+                {StatusIconKind::Vulnerable, 3},
+                {StatusIconKind::Weak, 2},
+                {StatusIconKind::Shield, 64},
+            }));
+
+    TowerSnapshot tower{1, 872, 1000};
+    REQUIRE(towerStatusDisplayItems(tower).empty());
+    tower.vulnerableLayers = 2;
+    tower.weakLayers = 1;
+    REQUIRE(towerStatusDisplayItems(tower) ==
+            std::vector<StatusDisplayItem>({
+                {StatusIconKind::Vulnerable, 2},
+                {StatusIconKind::Weak, 1},
+            }));
+    tower.vulnerableLayers = 0;
+    tower.weakLayers = 0;
+    REQUIRE(towerStatusDisplayItems(tower).empty());
+
+    REQUIRE(nearlyEqual(statusIconSize(40.0F), 16.0F));
+    REQUIRE(nearlyEqual(statusIconSize(108.0F), 19.44F));
+    REQUIRE(nearlyEqual(statusIconSize(200.0F), 24.0F));
+    const StatusStripMetrics metrics = statusStripMetrics(3U, 108.0F);
+    REQUIRE(metrics.iconSize >= 16.0F);
+    REQUIRE(metrics.iconSize <= 24.0F);
+    REQUIRE(metrics.totalWidth < 108.0F);
+
+    BoardSnapshot synchronizedBoard = makeBoard();
+    synchronizedBoard[5][0].type = PieceType::Hero;
+    synchronizedBoard[5][0].vulnerableLayers = 5;
+    synchronizedBoard[5][0].weakLayers = 4;
+    synchronizedBoard[5][0].shield = 32;
+    GameSnapshot synchronizedSnapshot = makeGameSnapshot(synchronizedBoard, 0, 9);
+    synchronizedSnapshot.towers[1] = tower;
+    synchronizedSnapshot.towers[1].vulnerableLayers = 5;
+    synchronizedSnapshot.towers[1].weakLayers = 4;
+
+    ClientGameState player0;
+    player0.setPlayerId(0);
+    player0.apply(GameStartedMessage{synchronizedSnapshot});
+    ClientGameState player1;
+    player1.setPlayerId(1);
+    player1.apply(GameStartedMessage{synchronizedSnapshot});
+    REQUIRE(heroStatusDisplayItems((*player0.board)[5][0]) ==
+            heroStatusDisplayItems((*player1.board)[5][0]));
+    REQUIRE(towerStatusDisplayItems(player0.towers[1]) ==
+            towerStatusDisplayItems(player1.towers[1]));
+}
+
 } // namespace
 
 void runGuiClientTests() {
@@ -332,4 +429,5 @@ void runGuiClientTests() {
     stateAndQueueTests();
     boxTextureTests();
     heroTextureTests();
+    statusEffectDisplayTests();
 }

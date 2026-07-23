@@ -7,9 +7,7 @@
 #include "game/Hero.hpp"
 #include "game/Tower.hpp"
 
-#include <algorithm>
 #include <stdexcept>
-#include <tuple>
 
 namespace sts {
 namespace {
@@ -40,20 +38,29 @@ std::vector<HeroId> CombatResolver::collectAttackers(int actingPlayerId) const {
     if (actingPlayerId != 0 && actingPlayerId != 1) {
         throw std::invalid_argument("actingPlayerId must be 0 or 1");
     }
-    std::vector<HeroId> ids = board_.livingHeroIdsForPlayer(actingPlayerId);
-    std::ranges::sort(ids, [this, actingPlayerId](HeroId leftId, HeroId rightId) {
-        const Hero* left = board_.heroById(leftId);
-        const Hero* right = board_.heroById(rightId);
-        if (left == nullptr || right == nullptr) {
-            return leftId < rightId;
+
+    std::vector<HeroId> ids;
+    const auto appendLivingHero = [this, &ids, actingPlayerId](Position position) {
+        const auto* hero = dynamic_cast<const Hero*>(board_.pieceAt(position));
+        if (hero != nullptr && hero->isAlive() &&
+            playerIdForPosition(hero->position()) == actingPlayerId) {
+            ids.push_back(hero->id());
         }
-        const auto orderKey = [actingPlayerId](const Hero& hero) {
-            const int distance = actingPlayerId == 0 ? hero.position().row - PlayerAreaRows
-                                                     : PlayerAreaRows - 1 - hero.position().row;
-            return std::tuple{distance, hero.position().column, hero.id()};
-        };
-        return orderKey(*left) < orderKey(*right);
-    });
+    };
+
+    if (actingPlayerId == 1) {
+        for (int row = 0; row < PlayerAreaRows; ++row) {
+            for (int column = 0; column < BoardColumns; ++column) {
+                appendLivingHero({row, column});
+            }
+        }
+    } else {
+        for (int row = BoardRows - 1; row >= PlayerAreaRows; --row) {
+            for (int column = BoardColumns - 1; column >= 0; --column) {
+                appendLivingHero({row, column});
+            }
+        }
+    }
     return ids;
 }
 
@@ -67,14 +74,22 @@ CombatResolution CombatResolver::resolve(int actingPlayerId) {
     resolution.events.push_back(phaseEvent(CombatEventType::CombatStarted,
                                            actingPlayerId, defendingPlayerId));
     CombatContext context(actingPlayerId, board_, towers_, *random_, resolution.events);
-    const std::vector<HeroId> attackerOrder = collectAttackers(actingPlayerId);
-    for (const HeroId attackerId : attackerOrder) {
+    const std::vector<HeroId> attackerIds = collectAttackers(actingPlayerId);
+    for (const HeroId attackerId : attackerIds) {
+        if (context.gameFinished()) {
+            resolution.gameFinished = true;
+            resolution.winnerPlayerId = actingPlayerId;
+            break;
+        }
+
         Hero* attacker = board_.heroById(attackerId);
         if (attacker == nullptr || !attacker->isAlive() ||
             playerIdForPosition(attacker->position()) != actingPlayerId) {
             continue;
         }
+
         attacker->performAttack(context);
+        resolveDeathsAndBoardChanges(resolution.events, actingPlayerId);
         if (context.gameFinished()) {
             resolution.gameFinished = true;
             resolution.winnerPlayerId = actingPlayerId;
@@ -83,14 +98,7 @@ CombatResolution CombatResolver::resolve(int actingPlayerId) {
     }
 
     processTurnEndStatuses(resolution.events, actingPlayerId);
-    for (const DeadHeroInfo& dead : board_.convertDeadHeroesToBoxes()) {
-        CombatEvent converted;
-        converted.type = CombatEventType::HeroConvertedToBox;
-        converted.targetHeroId = dead.id;
-        converted.actingPlayerId = actingPlayerId;
-        converted.targetPlayerId = playerIdForPosition(dead.position);
-        resolution.events.push_back(std::move(converted));
-    }
+    resolveDeathsAndBoardChanges(resolution.events, actingPlayerId);
     resolution.events.push_back(phaseEvent(CombatEventType::CombatFinished,
                                            actingPlayerId, defendingPlayerId,
                                            resolution.winnerPlayerId));
@@ -100,6 +108,18 @@ CombatResolution CombatResolver::resolve(int actingPlayerId) {
                                                resolution.winnerPlayerId));
     }
     return resolution;
+}
+
+void CombatResolver::resolveDeathsAndBoardChanges(std::vector<CombatEvent>& events,
+                                                  int actingPlayerId) {
+    for (const DeadHeroInfo& dead : board_.convertDeadHeroesToBoxes()) {
+        CombatEvent converted;
+        converted.type = CombatEventType::HeroConvertedToBox;
+        converted.targetHeroId = dead.id;
+        converted.actingPlayerId = actingPlayerId;
+        converted.targetPlayerId = playerIdForPosition(dead.position);
+        events.push_back(std::move(converted));
+    }
 }
 
 void CombatResolver::processTurnEndStatuses(std::vector<CombatEvent>& events, int actingPlayerId) {
@@ -135,6 +155,44 @@ void CombatResolver::processTurnEndStatuses(std::vector<CombatEvent>& events, in
             event.targetPlayerId = heroPlayerId;
             event.amount = -1;
             event.weakLayers = hero->weakLayers();
+            events.push_back(std::move(event));
+        }
+    }
+
+    for (Tower& tower : towers_) {
+        const int oldVulnerable = tower.vulnerableLayers();
+        const int oldWeak = tower.weakLayers();
+        tower.processTurnEndStatuses();
+
+        if (oldVulnerable > 0) {
+            CombatEvent event;
+            event.type = tower.vulnerableLayers() == 0
+                             ? CombatEventType::VulnerableExpired
+                             : CombatEventType::VulnerableReduced;
+            event.actingPlayerId = actingPlayerId;
+            event.targetPlayerId = tower.playerId();
+            event.targetType = CombatTargetType::Tower;
+            event.targetTowerPlayerId = tower.playerId();
+            event.amount = -1;
+            event.previousLayers = oldVulnerable;
+            event.vulnerableLayers = tower.vulnerableLayers();
+            event.totalLayers = tower.vulnerableLayers();
+            events.push_back(std::move(event));
+        }
+
+        if (oldWeak > 0) {
+            CombatEvent event;
+            event.type = tower.weakLayers() == 0
+                             ? CombatEventType::WeakExpired
+                             : CombatEventType::WeakReduced;
+            event.actingPlayerId = actingPlayerId;
+            event.targetPlayerId = tower.playerId();
+            event.targetType = CombatTargetType::Tower;
+            event.targetTowerPlayerId = tower.playerId();
+            event.amount = -1;
+            event.previousLayers = oldWeak;
+            event.weakLayers = tower.weakLayers();
+            event.totalLayers = tower.weakLayers();
             events.push_back(std::move(event));
         }
     }

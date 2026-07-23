@@ -48,6 +48,29 @@ const CombatEvent* firstEvent(const std::vector<CombatEvent>& events, CombatEven
     return found == events.end() ? nullptr : &*found;
 }
 
+std::size_t eventIndex(const std::vector<CombatEvent>& events,
+                       CombatEventType type,
+                       std::optional<HeroId> attackerId = std::nullopt) {
+    for (std::size_t index = 0; index < events.size(); ++index) {
+        if (events[index].type == type &&
+            (!attackerId.has_value() || events[index].attackerHeroId == attackerId)) {
+            return index;
+        }
+    }
+    return events.size();
+}
+
+std::vector<HeroId> attackerIdsForEvent(const std::vector<CombatEvent>& events,
+                                        CombatEventType type) {
+    std::vector<HeroId> ids;
+    for (const CombatEvent& event : events) {
+        if (event.type == type && event.attackerHeroId.has_value()) {
+            ids.push_back(*event.attackerHeroId);
+        }
+    }
+    return ids;
+}
+
 void performOne(Hero& hero,
                 int actingPlayerId,
                 BoxBoard& board,
@@ -99,7 +122,7 @@ void attackOrderTests() {
     placeHero(board, 2, PieceColor::Red, {5, 4}, 1, 0);
     placeHero(board, 3, PieceColor::Red, {5, 0}, 1, 0);
     std::array<Tower, 2> towers{Tower{0}, Tower{1}};
-    REQUIRE(CombatResolver(board, towers).collectAttackers(0) == std::vector<HeroId>({3, 2, 1}));
+    REQUIRE(CombatResolver(board, towers).collectAttackers(0) == std::vector<HeroId>({1, 2, 3}));
 
     BoxBoard playerOneBoard = test::solidBoard();
     placeHero(playerOneBoard, 10, PieceColor::Blue, {3, 4}, 1, 1);
@@ -107,7 +130,19 @@ void attackOrderTests() {
     placeHero(playerOneBoard, 12, PieceColor::Blue, {4, 4}, 1, 1);
     std::array<Tower, 2> playerOneTowers{Tower{0}, Tower{1}};
     REQUIRE(CombatResolver(playerOneBoard, playerOneTowers).collectAttackers(1) ==
-            std::vector<HeroId>({11, 12, 10}));
+            std::vector<HeroId>({10, 11, 12}));
+
+    BoxBoard movedBoard = test::solidBoard();
+    placeHero(movedBoard, 13, PieceColor::Red, {5, 2}, 1, 0);
+    placeHero(movedBoard, 14, PieceColor::Red, {8, 4}, 1, 0);
+    const HeroId generatedId =
+        movedBoard.resolveElimination(0, {{7, 2}, {8, 2}, {9, 2}});
+    REQUIRE(movedBoard.heroById(generatedId)->position() == (Position{9, 2}));
+    REQUIRE(movedBoard.heroById(14)->position() == (Position{8, 4}));
+    REQUIRE(movedBoard.heroById(13)->position() == (Position{7, 2}));
+    std::array<Tower, 2> movedTowers{Tower{0}, Tower{1}};
+    REQUIRE(CombatResolver(movedBoard, movedTowers).collectAttackers(0) ==
+            std::vector<HeroId>({generatedId, 14, 13}));
 
     CombatRandom random(std::vector<std::size_t>{0});
     std::vector<CombatEvent> events;
@@ -310,13 +345,15 @@ void chickenPotTests() {
         Hero* chicken = placeHero(board, 80, PieceColor::Blue, {5, 0}, 1, 0);
         Hero* first = placeHero(board, 81, PieceColor::Red, {4, 4}, 1, 1);
         Hero* second = placeHero(board, 82, PieceColor::Red, {4, 3}, 10, 1);
+        const HeroId firstId = first->id();
         lowerToHp(*first, 12);
         const int secondHp = second->currentHp();
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
         CombatRandom random(std::vector<std::size_t>{1, 0});
         std::vector<CombatEvent> events;
         performOne(*chicken, 0, board, towers, random, events);
-        REQUIRE(first->isDead());
+        REQUIRE(board.heroById(firstId) == nullptr);
+        REQUIRE(board.pieceAt({4, 4})->type() == PieceType::Box);
         REQUIRE(second->currentHp() == secondHp - 8);
         REQUIRE(chicken->lightningOrbs() == 0);
         std::vector<const CombatEvent*> lightningDamageEvents;
@@ -326,36 +363,111 @@ void chickenPotTests() {
             }
         }
         REQUIRE(lightningDamageEvents.size() == 2U);
-        REQUIRE(lightningDamageEvents[0]->targetHeroId == HeroId{81});
-        REQUIRE(lightningDamageEvents[0]->overkillDamage == 2);
+        REQUIRE(lightningDamageEvents[0]->targetHeroId == firstId);
+        REQUIRE(lightningDamageEvents[0]->overflowDamage == 2);
         REQUIRE(lightningDamageEvents[1]->targetHeroId == HeroId{82});
         REQUIRE(lightningDamageEvents[1]->baseDamage == 8);
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 2);
+        std::vector<std::size_t> lightningTargetIndices;
+        for (std::size_t index = 0; index < events.size(); ++index) {
+            if (events[index].type == CombatEventType::LightningTargetSelected) {
+                lightningTargetIndices.push_back(index);
+            }
+        }
+        REQUIRE(lightningTargetIndices.size() == 2U);
+        const std::size_t converted =
+            eventIndex(events, CombatEventType::HeroConvertedToBox);
+        REQUIRE(lightningTargetIndices[0] < converted);
+        REQUIRE(converted < lightningTargetIndices[1]);
     }
 }
 
-void singleTargetAndOverkillTests() {
+void singleTargetAndOverflowTests() {
     DamageResolver resolver;
     auto rawAttacker = HeroFactory::create(200, PieceColor::Red, {5, 0}, 10, 0);
     auto rawTarget = HeroFactory::create(201, PieceColor::Yellow, {4, 0}, 10, 1);
     lowerToHp(*rawTarget, 30);
-    const DamageResult overkill = resolver.resolveHeroDamage(
+    const DamageResult overflow = resolver.resolveHeroDamage(
         *rawAttacker, *rawTarget, 100, DamageKind::NormalAttack);
-    REQUIRE(overkill.calculatedDamage == 100);
-    REQUIRE(overkill.hpDamageApplied == 30);
-    REQUIRE(overkill.hpDamage == 30);
-    REQUIRE(overkill.overkillDamage == 70);
-    REQUIRE(overkill.targetRemainingHp == 0);
-    REQUIRE(overkill.targetDied);
+    REQUIRE(overflow.calculatedDamage == 100);
+    REQUIRE(overflow.hpDamageApplied == 30);
+    REQUIRE(overflow.hpDamage == 30);
+    REQUIRE(overflow.overflowDamage == 70);
+    REQUIRE(overflow.hpBefore == 30);
+    REQUIRE(overflow.hpAfter == 0);
+    REQUIRE(overflow.targetRemainingHp == 0);
+    REQUIRE(overflow.targetDied);
 
     auto shieldedTarget = HeroFactory::create(202, PieceColor::Yellow, {4, 0}, 10, 1);
     lowerToHp(*shieldedTarget, 30);
     REQUIRE(shieldedTarget->gainShield(20) == 20);
-    const DamageResult shieldedOverkill = resolver.resolveHeroDamage(
+    const DamageResult shieldedOverflow = resolver.resolveHeroDamage(
         *rawAttacker, *shieldedTarget, 100, DamageKind::NormalAttack);
-    REQUIRE(shieldedOverkill.shieldAbsorbed == 20);
-    REQUIRE(shieldedOverkill.hpDamageApplied == 30);
-    REQUIRE(shieldedOverkill.overkillDamage == 50);
-    REQUIRE(shieldedOverkill.targetRemainingHp == 0);
+    REQUIRE(shieldedOverflow.shieldAbsorbed == 20);
+    REQUIRE(shieldedOverflow.hpDamageApplied == 30);
+    REQUIRE(shieldedOverflow.overflowDamage == 50);
+    REQUIRE(shieldedOverflow.shieldBefore == 20);
+    REQUIRE(shieldedOverflow.shieldAfter == 0);
+    REQUIRE(shieldedOverflow.targetRemainingHp == 0);
+
+    auto exactTarget = HeroFactory::create(203, PieceColor::Yellow, {4, 0}, 10, 1);
+    lowerToHp(*exactTarget, 30);
+    REQUIRE(exactTarget->gainShield(20) == 20);
+    const DamageResult exactKill = resolver.resolveHeroDamage(
+        *rawAttacker, *exactTarget, 50, DamageKind::NormalAttack);
+    REQUIRE(exactKill.targetDied);
+    REQUIRE(exactKill.overflowDamage == 0);
+
+    auto survivingTarget = HeroFactory::create(204, PieceColor::Yellow, {4, 0}, 10, 1);
+    lowerToHp(*survivingTarget, 100);
+    REQUIRE(survivingTarget->gainShield(10) == 10);
+    const DamageResult survives = resolver.resolveHeroDamage(
+        *rawAttacker, *survivingTarget, 50, DamageKind::NormalAttack);
+    REQUIRE(!survives.targetDied);
+    REQUIRE(survives.overflowDamage == 0);
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* attacker = placeHero(board, 205, PieceColor::Red, {5, 0}, 10, 0);
+        Hero* target = placeHero(board, 206, PieceColor::Yellow, {4, 4}, 10, 1);
+        Hero* other = placeHero(board, 207, PieceColor::Green, {4, 3}, 10, 1);
+        attacker->addWeakLayers(1);
+        target->addVulnerableLayers(1);
+        lowerToHp(*target, 30);
+        REQUIRE(target->gainShield(20) == 20);
+        const int otherHp = other->currentHp();
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        towers[1].addVulnerableLayers(2);
+        CombatRandom random(19U);
+        std::vector<CombatEvent> events;
+        CombatContext context(0, board, towers, random, events);
+        const DamageResult result =
+            context.damageHero(attacker->id(), target->id(), 100, DamageKind::NormalAttack);
+
+        REQUIRE(result.damageAfterWeak == 75);
+        REQUIRE(result.damageAfterVulnerable == 113);
+        REQUIRE(result.calculatedDamage == 113);
+        REQUIRE(result.shieldAbsorbed == 20);
+        REQUIRE(result.hpDamageApplied == 30);
+        REQUIRE(result.overflowDamage == 63);
+        REQUIRE(result.towerDamageApplied == 63);
+        REQUIRE(result.towerHpBefore == Tower::MaxHp);
+        REQUIRE(result.towerHpAfter == Tower::MaxHp - 63);
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 63);
+        REQUIRE(towers[1].vulnerableLayers() == 2);
+        REQUIRE(other->currentHp() == otherHp);
+        const std::size_t died = eventIndex(events, CombatEventType::HeroDied);
+        const std::size_t overflowGenerated =
+            eventIndex(events, CombatEventType::OverflowDamageGenerated);
+        const std::size_t towerDamaged =
+            eventIndex(events, CombatEventType::TowerDamaged);
+        REQUIRE(died < overflowGenerated);
+        REQUIRE(overflowGenerated < towerDamaged);
+        const CombatEvent* towerEvent = firstEvent(events, CombatEventType::TowerDamaged);
+        REQUIRE(towerEvent != nullptr);
+        REQUIRE(towerEvent->towerDamageSource == TowerDamageSource::Overflow);
+        REQUIRE(towerEvent->towerDamageApplied == 63);
+    }
 
     const auto verifySingleNormalTarget = [](PieceColor attackerColor, HeroId firstId) {
         BoxBoard board = test::solidBoard();
@@ -432,6 +544,7 @@ void singleTargetAndOverkillTests() {
         Hero* chicken = placeHero(board, 255, PieceColor::Blue, {5, 0}, 1, 0);
         Hero* first = placeHero(board, 256, PieceColor::Red, {4, 4}, 1, 1);
         Hero* second = placeHero(board, 257, PieceColor::Red, {4, 3}, 10, 1);
+        const HeroId firstId = first->id();
         lowerToHp(*first, 3);
         const int secondHp = second->currentHp();
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
@@ -439,7 +552,8 @@ void singleTargetAndOverkillTests() {
         std::vector<CombatEvent> events;
         performOne(*chicken, 0, board, towers, random, events);
 
-        REQUIRE(first->isDead());
+        REQUIRE(board.heroById(firstId) == nullptr);
+        REQUIRE(board.pieceAt({4, 4})->type() == PieceType::Box);
         REQUIRE(second->currentHp() == secondHp - 16);
         std::vector<const CombatEvent*> damageEvents;
         for (const CombatEvent& event : events) {
@@ -449,10 +563,11 @@ void singleTargetAndOverkillTests() {
         }
         REQUIRE(damageEvents.size() == 3U);
         REQUIRE(damageEvents[0]->damageKind == DamageKind::NormalAttack);
-        REQUIRE(damageEvents[0]->targetHeroId == first->id());
+        REQUIRE(damageEvents[0]->targetHeroId == firstId);
         REQUIRE(damageEvents[0]->baseDamage == 6);
         REQUIRE(damageEvents[0]->hpDamageApplied == 3);
-        REQUIRE(damageEvents[0]->overkillDamage == 3);
+        REQUIRE(damageEvents[0]->overflowDamage == 3);
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 3);
         REQUIRE(damageEvents[1]->damageKind == DamageKind::Lightning);
         REQUIRE(damageEvents[1]->targetHeroId == second->id());
         REQUIRE(damageEvents[1]->baseDamage == 8);
@@ -467,6 +582,7 @@ void singleTargetAndOverkillTests() {
         Hero* victim = placeHero(board, 259, PieceColor::Yellow, {4, 4}, 10, 1);
         Hero* sameRow = placeHero(board, 263, PieceColor::Yellow, {4, 3}, 10, 1);
         Hero* rearRow = placeHero(board, 264, PieceColor::Yellow, {3, 4}, 10, 1);
+        const HeroId victimId = victim->id();
         lowerToHp(*victim, 30);
         const int sameRowHp = sameRow->currentHp();
         const int rearRowHp = rearRow->currentHp();
@@ -475,22 +591,24 @@ void singleTargetAndOverkillTests() {
         std::vector<CombatEvent> events;
         performOne(*attacker, 0, board, towers, random, events);
 
-        REQUIRE(victim->isDead());
+        REQUIRE(board.heroById(victimId) == nullptr);
+        REQUIRE(board.pieceAt({4, 4})->type() == PieceType::Box);
         REQUIRE(sameRow->currentHp() == sameRowHp);
         REQUIRE(rearRow->currentHp() == rearRowHp);
-        REQUIRE(towers[1].currentHp() == Tower::MaxHp);
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 110);
         const CombatEvent* damaged = firstEvent(events, CombatEventType::HeroDamaged);
         REQUIRE(damaged != nullptr);
-        REQUIRE(damaged->targetHeroId == victim->id());
+        REQUIRE(damaged->targetHeroId == victimId);
         REQUIRE(damaged->hpDamageApplied == 30);
-        REQUIRE(damaged->overkillDamage == 110);
+        REQUIRE(damaged->overflowDamage == 110);
         REQUIRE(countEvents(events, CombatEventType::HeroDamaged) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::OverflowDamageGenerated) == 1U);
     }
 
     {
         BoxBoard board = test::solidBoard();
-        Hero* attackerA = placeHero(board, 260, PieceColor::Red, {5, 0}, 10, 0);
-        Hero* attackerB = placeHero(board, 261, PieceColor::Red, {5, 1}, 10, 0);
+        Hero* attackerA = placeHero(board, 260, PieceColor::Red, {9, 4}, 10, 0);
+        Hero* attackerB = placeHero(board, 261, PieceColor::Red, {8, 4}, 10, 0);
         Hero* victim = placeHero(board, 262, PieceColor::Yellow, {4, 0}, 10, 1);
         lowerToHp(*victim, 30);
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
@@ -500,11 +618,339 @@ void singleTargetAndOverkillTests() {
         REQUIRE(heroDamage != nullptr);
         REQUIRE(heroDamage->attackerHeroId == attackerA->id());
         REQUIRE(heroDamage->hpDamageApplied == 30);
-        REQUIRE(heroDamage->overkillDamage == 110);
-        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 140);
-        const CombatEvent* towerDamage = firstEvent(result.events, CombatEventType::TowerDamaged);
-        REQUIRE(towerDamage != nullptr);
-        REQUIRE(towerDamage->attackerHeroId == attackerB->id());
+        REQUIRE(heroDamage->overflowDamage == 110);
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 110 - 210);
+        std::vector<const CombatEvent*> towerDamageEvents;
+        for (const CombatEvent& event : result.events) {
+            if (event.type == CombatEventType::TowerDamaged) {
+                towerDamageEvents.push_back(&event);
+            }
+        }
+        REQUIRE(towerDamageEvents.size() == 2U);
+        REQUIRE(towerDamageEvents[0]->attackerHeroId == attackerA->id());
+        REQUIRE(towerDamageEvents[0]->towerDamageSource == TowerDamageSource::Overflow);
+        REQUIRE(towerDamageEvents[0]->towerDamageApplied == 110);
+        REQUIRE(towerDamageEvents[1]->attackerHeroId == attackerB->id());
+        REQUIRE(towerDamageEvents[1]->towerDamageSource == TowerDamageSource::DirectAttack);
+        REQUIRE(towerDamageEvents[1]->towerDamageApplied == 210);
+        REQUIRE(towers[1].vulnerableLayers() == 2);
+        const std::size_t converted =
+            eventIndex(result.events, CombatEventType::HeroConvertedToBox);
+        const std::size_t towerDamaged =
+            eventIndex(result.events, CombatEventType::TowerDamaged, attackerB->id());
+        REQUIRE(converted < towerDamaged);
+    }
+}
+
+void heroOverflowEffectTests() {
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* fighter = placeHero(board, 315, PieceColor::Red, {5, 0}, 1, 0);
+        Hero* target = placeHero(board, 316, PieceColor::Yellow, {4, 4}, 10, 1);
+        lowerToHp(*target, 14);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(57U);
+        std::vector<CombatEvent> events;
+        performOne(*fighter, 0, board, towers, random, events);
+
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp);
+        REQUIRE(towers[1].vulnerableLayers() == 3);
+        REQUIRE(countEvents(events, CombatEventType::OverflowDamageGenerated) == 0U);
+        REQUIRE(countEvents(events, CombatEventType::VulnerableApplied) == 1U);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* fighter = placeHero(board, 320, PieceColor::Red, {5, 0}, 10, 0);
+        Hero* target = placeHero(board, 321, PieceColor::Yellow, {4, 4}, 10, 1);
+        lowerToHp(*fighter, 100);
+        lowerToHp(*target, 30);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(59U);
+        std::vector<CombatEvent> events;
+        performOne(*fighter, 0, board, towers, random, events);
+
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 110);
+        REQUIRE(towers[1].vulnerableLayers() == 3);
+        REQUIRE(fighter->currentHp() == 120);
+        REQUIRE(countEvents(events, CombatEventType::VulnerableApplied) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::HeroHealed) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::OverflowDamageGenerated) == 1U);
+        const CombatEvent* redirected =
+            firstEvent(events, CombatEventType::VulnerableApplied);
+        REQUIRE(redirected != nullptr);
+        REQUIRE(redirected->targetType == CombatTargetType::Tower);
+        REQUIRE(redirected->targetTowerPlayerId == 1);
+        REQUIRE(redirected->redirectedBecauseHeroDied);
+        REQUIRE(redirected->addedLayers == 3);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* hunter = placeHero(board, 330, PieceColor::Green, {5, 0}, 10, 0);
+        Hero* target = placeHero(board, 331, PieceColor::Yellow, {4, 4}, 10, 1);
+        lowerToHp(*target, 30);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(61U);
+        std::vector<CombatEvent> events;
+        performOne(*hunter, 0, board, towers, random, events);
+
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 90);
+        REQUIRE(towers[1].weakLayers() == 2);
+        REQUIRE(hunter->shield() == 80);
+        REQUIRE(countEvents(events, CombatEventType::WeakApplied) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::ShieldGained) == 1U);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* regent = placeHero(board, 340, PieceColor::Yellow, {5, 0}, 10, 0);
+        Hero* target = placeHero(board, 341, PieceColor::Green, {4, 4}, 10, 1);
+        lowerToHp(*target, 30);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(67U);
+        std::vector<CombatEvent> events;
+        performOne(*regent, 0, board, towers, random, events);
+
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 110);
+        REQUIRE(towers[1].vulnerableLayers() == 1);
+        REQUIRE(towers[1].weakLayers() == 2);
+        REQUIRE(regent->radiantStars() == 1);
+        REQUIRE(countEvents(events, CombatEventType::WeakApplied) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::VulnerableApplied) == 1U);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* regent = placeHero(board, 350, PieceColor::Yellow, {5, 0}, 10, 0);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(71U);
+        std::vector<CombatEvent> events;
+        performOne(*regent, 0, board, towers, random, events);
+        REQUIRE(regent->radiantStars() == 1);
+        const int towerHpBeforeCharging = towers[1].currentHp();
+
+        Hero* target = placeHero(board, 351, PieceColor::Green, {4, 4}, 10, 1);
+        lowerToHp(*target, 30);
+        events.clear();
+        performOne(*regent, 0, board, towers, random, events);
+        REQUIRE(towers[1].currentHp() == towerHpBeforeCharging - 30);
+        REQUIRE(regent->radiantStars() == 4);
+        REQUIRE(regent->shield() == 50);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* chicken = placeHero(board, 360, PieceColor::Blue, {5, 0}, 1, 0);
+        Hero* first = placeHero(board, 361, PieceColor::Red, {4, 4}, 1, 1);
+        Hero* second = placeHero(board, 362, PieceColor::Green, {4, 3}, 1, 1);
+        lowerToHp(*first, 12);
+        lowerToHp(*second, 4);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(std::vector<std::size_t>{1, 0});
+        std::vector<CombatEvent> events;
+        performOne(*chicken, 0, board, towers, random, events);
+
+        REQUIRE(towers[1].currentHp() == Tower::MaxHp - 2 - 4);
+        REQUIRE(countEvents(events, CombatEventType::LightningActivated) == 2U);
+        REQUIRE(countEvents(events, CombatEventType::OverflowDamageGenerated) == 2U);
+        REQUIRE(chicken->lightningOrbs() == 0);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* chicken = placeHero(board, 370, PieceColor::Blue, {5, 0}, 1, 0);
+        Hero* target = placeHero(board, 371, PieceColor::Red, {4, 4}, 1, 1);
+        Hero* untouched = placeHero(board, 372, PieceColor::Green, {4, 3}, 10, 1);
+        lowerToHp(*target, 12);
+        const int untouchedHp = untouched->currentHp();
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        static_cast<void>(towers[1].takeDamage(Tower::MaxHp - 2));
+        CombatRandom random(std::vector<std::size_t>{1, 0});
+        std::vector<CombatEvent> events;
+        performOne(*chicken, 0, board, towers, random, events);
+
+        REQUIRE(towers[1].isDestroyed());
+        REQUIRE(untouched->currentHp() == untouchedHp);
+        REQUIRE(countEvents(events, CombatEventType::LightningActivated) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::OverflowDamageGenerated) == 1U);
+        REQUIRE(chicken->lightningOrbs() == 0);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* fighter = placeHero(board, 380, PieceColor::Red, {9, 4}, 10, 0);
+        Hero* skipped = placeHero(board, 381, PieceColor::Green, {8, 4}, 10, 0);
+        Hero* target = placeHero(board, 382, PieceColor::Yellow, {4, 4}, 10, 1);
+        lowerToHp(*fighter, 100);
+        lowerToHp(*target, 30);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        static_cast<void>(towers[1].takeDamage(Tower::MaxHp - 100));
+        CombatRandom random(73U);
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+
+        REQUIRE(result.gameFinished);
+        REQUIRE(towers[1].isDestroyed());
+        REQUIRE(fighter->currentHp() == 120);
+        REQUIRE(eventIndex(result.events, CombatEventType::HeroAttacked, skipped->id()) ==
+                result.events.size());
+        const CombatEvent* towerDamaged =
+            firstEvent(result.events, CombatEventType::TowerDamaged);
+        REQUIRE(towerDamaged != nullptr);
+        REQUIRE(towerDamaged->towerDamageSource == TowerDamageSource::Overflow);
+        REQUIRE(towerDamaged->overflowDamage == 110);
+        REQUIRE(towerDamaged->towerDamageApplied == 100);
+        REQUIRE(towerDamaged->towerDestroyed);
+        REQUIRE(towers[1].vulnerableLayers() == 0);
+        REQUIRE(countEvents(result.events, CombatEventType::VulnerableApplied) == 0U);
+    }
+
+    {
+        Tower tower(1);
+        tower.addVulnerableLayers(2);
+        tower.addVulnerableLayers(3);
+        tower.addWeakLayers(1);
+        tower.addWeakLayers(2);
+        REQUIRE(tower.vulnerableLayers() == 5);
+        REQUIRE(tower.weakLayers() == 3);
+        const TowerSnapshot snapshot = tower.snapshot();
+        REQUIRE(snapshot.vulnerableLayers == 5);
+        REQUIRE(snapshot.weakLayers == 3);
+        REQUIRE(!snapshot.destroyed);
+
+        auto attacker = HeroFactory::create(389, PieceColor::Red, {5, 0}, 1, 0);
+        DamageResolver resolver;
+        const int hpBefore = tower.currentHp();
+        const DamageResult direct =
+            resolver.resolveTowerDamage(*attacker, tower, 10, DamageKind::NormalAttack);
+        REQUIRE(direct.damageAfterWeak == 10);
+        REQUIRE(direct.damageAfterVulnerable == 15);
+        REQUIRE(tower.currentHp() == hpBefore - 15);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* fighter = placeHero(board, 390, PieceColor::Red, {5, 0}, 1, 0);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(79U);
+        std::vector<CombatEvent> events;
+        performOne(*fighter, 0, board, towers, random, events);
+        REQUIRE(towers[1].vulnerableLayers() == 0);
+        REQUIRE(towers[1].weakLayers() == 0);
+        REQUIRE(countEvents(events, CombatEventType::VulnerableApplied) == 0U);
+    }
+}
+
+void sequentialAttackerResolutionTests() {
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* fighter = placeHero(board, 270, PieceColor::Red, {9, 4}, 1, 0);
+        Hero* hunter = placeHero(board, 271, PieceColor::Green, {8, 4}, 1, 0);
+        Hero* target = placeHero(board, 272, PieceColor::Yellow, {4, 4}, 20, 1);
+        lowerToHp(*fighter, 10);
+        const int targetHp = target->currentHp();
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(41U);
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+
+        REQUIRE(attackerIdsForEvent(result.events, CombatEventType::HeroAttacked) ==
+                std::vector<HeroId>({fighter->id(), hunter->id()}));
+        REQUIRE(target->currentHp() == targetHp - 14 - 18);
+        REQUIRE(fighter->currentHp() == 12);
+        REQUIRE(hunter->shield() == 8);
+        const std::size_t vulnerableApplied =
+            eventIndex(result.events, CombatEventType::VulnerableApplied, fighter->id());
+        const std::size_t fighterHealed =
+            eventIndex(result.events, CombatEventType::HeroHealed, fighter->id());
+        const std::size_t hunterAttacked =
+            eventIndex(result.events, CombatEventType::HeroAttacked, hunter->id());
+        REQUIRE(vulnerableApplied < hunterAttacked);
+        REQUIRE(fighterHealed < hunterAttacked);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* regent = placeHero(board, 280, PieceColor::Yellow, {9, 4}, 1, 0);
+        Hero* follower = placeHero(board, 281, PieceColor::Red, {8, 4}, 1, 0);
+        placeHero(board, 282, PieceColor::Green, {4, 4}, 20, 1);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(43U);
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+
+        REQUIRE(regent->radiantStars() == 1);
+        const std::size_t starsChanged =
+            eventIndex(result.events, CombatEventType::RadiantStarsChanged, regent->id());
+        const std::size_t followerAttacked =
+            eventIndex(result.events, CombatEventType::HeroAttacked, follower->id());
+        REQUIRE(starsChanged < followerAttacked);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* chicken = placeHero(board, 290, PieceColor::Blue, {9, 4}, 1, 0);
+        Hero* follower = placeHero(board, 291, PieceColor::Red, {8, 4}, 1, 0);
+        placeHero(board, 292, PieceColor::Yellow, {4, 4}, 20, 1);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(std::vector<std::size_t>{0, 0});
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+
+        REQUIRE(countEvents(result.events, CombatEventType::LightningActivated) == 2U);
+        REQUIRE(chicken->lightningOrbs() == 0);
+        const std::size_t orbConsumed =
+            eventIndex(result.events, CombatEventType::LightningOrbChanged, chicken->id());
+        const std::size_t followerAttacked =
+            eventIndex(result.events, CombatEventType::HeroAttacked, follower->id());
+        REQUIRE(orbConsumed < followerAttacked);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* firstAttacker = placeHero(board, 300, PieceColor::Red, {9, 4}, 10, 0);
+        Hero* secondAttacker = placeHero(board, 301, PieceColor::Green, {8, 4}, 1, 0);
+        Hero* firstTarget = placeHero(board, 302, PieceColor::Yellow, {4, 4}, 10, 1);
+        Hero* secondTarget = placeHero(board, 303, PieceColor::Yellow, {4, 3}, 20, 1);
+        const HeroId firstTargetId = firstTarget->id();
+        lowerToHp(*firstTarget, 30);
+        const int secondTargetHp = secondTarget->currentHp();
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        CombatRandom random(47U);
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+
+        std::vector<const CombatEvent*> damageEvents;
+        for (const CombatEvent& event : result.events) {
+            if (event.type == CombatEventType::HeroDamaged &&
+                event.damageKind == DamageKind::NormalAttack) {
+                damageEvents.push_back(&event);
+            }
+        }
+        REQUIRE(damageEvents.size() == 2U);
+        REQUIRE(damageEvents[0]->attackerHeroId == firstAttacker->id());
+        REQUIRE(damageEvents[0]->targetHeroId == firstTargetId);
+        REQUIRE(damageEvents[1]->attackerHeroId == secondAttacker->id());
+        REQUIRE(damageEvents[1]->targetHeroId == secondTarget->id());
+        REQUIRE(secondTarget->currentHp() == secondTargetHp - 12);
+        const std::size_t converted =
+            eventIndex(result.events, CombatEventType::HeroConvertedToBox);
+        const std::size_t secondAttacked =
+            eventIndex(result.events, CombatEventType::HeroAttacked, secondAttacker->id());
+        REQUIRE(converted < secondAttacked);
+    }
+
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* hunter = placeHero(board, 310, PieceColor::Green, {9, 4}, 1, 0);
+        Hero* skipped = placeHero(board, 311, PieceColor::Red, {8, 4}, 10, 0);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        static_cast<void>(towers[1].takeDamage(Tower::MaxHp - 1));
+        CombatRandom random(53U);
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+
+        REQUIRE(result.gameFinished);
+        REQUIRE(hunter->shield() == 8);
+        REQUIRE(eventIndex(result.events, CombatEventType::TowerDamaged, hunter->id()) <
+                result.events.size());
+        REQUIRE(eventIndex(result.events, CombatEventType::TowerDamaged, skipped->id()) ==
+                result.events.size());
     }
 }
 
@@ -557,7 +1003,8 @@ void resolverStatusDeathAndAtomicTests() {
         const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
         REQUIRE(countEvents(result.events, CombatEventType::HeroDied) == 1U);
         REQUIRE(countEvents(result.events, CombatEventType::HeroConvertedToBox) == 1U);
-        REQUIRE(countEvents(result.events, CombatEventType::VulnerableApplied) == 0U);
+        REQUIRE(countEvents(result.events, CombatEventType::VulnerableApplied) == 1U);
+        REQUIRE(towers[1].vulnerableLayers() == 2);
         REQUIRE(board.pieceAt({4, 0})->type() == PieceType::Box);
     }
 }
@@ -583,6 +1030,20 @@ void statusExpiresAtEachPlayerTurnBoundary() {
     REQUIRE(damage->damageAfterWeak == 11);
     REQUIRE(statusHero->vulnerableLayers() == 0);
     REQUIRE(statusHero->weakLayers() == 0);
+
+    BoxBoard towerStatusBoard = test::solidBoard();
+    std::array<Tower, 2> statusTowers{Tower{0}, Tower{1}};
+    statusTowers[0].addVulnerableLayers(3);
+    statusTowers[0].addWeakLayers(2);
+    CombatRandom towerRandom(17U);
+    static_cast<void>(CombatResolver(towerStatusBoard, statusTowers, towerRandom).resolve(0));
+    REQUIRE(statusTowers[0].vulnerableLayers() == 2);
+    REQUIRE(statusTowers[0].weakLayers() == 1);
+    static_cast<void>(CombatResolver(towerStatusBoard, statusTowers, towerRandom).resolve(1));
+    REQUIRE(statusTowers[0].vulnerableLayers() == 1);
+    REQUIRE(statusTowers[0].weakLayers() == 0);
+    static_cast<void>(CombatResolver(towerStatusBoard, statusTowers, towerRandom).resolve(0));
+    REQUIRE(statusTowers[0].vulnerableLayers() == 0);
 }
 
 void remainingAtomicActionTests() {
@@ -616,16 +1077,31 @@ void remainingAtomicActionTests() {
     }
     {
         BoxBoard board = test::solidBoard();
-        Hero* chicken = placeHero(board, 142, PieceColor::Blue, {5, 0}, 1, 0);
-        placeHero(board, 143, PieceColor::Red, {4, 0}, 10, 1);
+        Hero* chicken = placeHero(board, 142, PieceColor::Blue, {9, 4}, 1, 0);
+        Hero* skipped = placeHero(board, 144, PieceColor::Red, {8, 4}, 1, 0);
+        placeHero(board, 143, PieceColor::Red, {4, 4}, 10, 1);
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
         static_cast<void>(towers[1].takeDamage(Tower::MaxHp - 1));
         CombatRandom random(std::vector<std::size_t>{1, 0});
+        const CombatResolution result = CombatResolver(board, towers, random).resolve(0);
+        REQUIRE(towers[1].isDestroyed());
+        REQUIRE(chicken->lightningOrbs() == 0);
+        REQUIRE(countEvents(result.events, CombatEventType::LightningActivated) == 1U);
+        REQUIRE(eventIndex(result.events, CombatEventType::HeroAttacked, skipped->id()) ==
+                result.events.size());
+    }
+    {
+        BoxBoard board = test::solidBoard();
+        Hero* chicken = placeHero(board, 145, PieceColor::Blue, {9, 4}, 1, 0);
+        std::array<Tower, 2> towers{Tower{0}, Tower{1}};
+        static_cast<void>(towers[1].takeDamage(Tower::MaxHp - 1));
+        CombatRandom random(3U);
         std::vector<CombatEvent> events;
         performOne(*chicken, 0, board, towers, random, events);
         REQUIRE(towers[1].isDestroyed());
         REQUIRE(chicken->lightningOrbs() == 0);
-        REQUIRE(countEvents(events, CombatEventType::LightningActivated) == 1U);
+        REQUIRE(countEvents(events, CombatEventType::LightningActivated) == 0U);
+        REQUIRE(countEvents(events, CombatEventType::LightningOrbChanged) == 1U);
     }
 }
 
@@ -702,7 +1178,9 @@ void runCombatTests() {
     silentHunterTests();
     regentTests();
     chickenPotTests();
-    singleTargetAndOverkillTests();
+    singleTargetAndOverflowTests();
+    heroOverflowEffectTests();
+    sequentialAttackerResolutionTests();
     resolverStatusDeathAndAtomicTests();
     statusExpiresAtEachPlayerTurnBoundary();
     remainingAtomicActionTests();

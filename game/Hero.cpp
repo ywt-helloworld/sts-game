@@ -110,8 +110,8 @@ IronFighter::IronFighter(HeroId id, Position position, int attributeValue,
 void IronFighter::performAttack(CombatContext& context) {
     std::optional<HeroId> targetId;
     const DamageResult result = performNormalAttack(*this, context, currentBaseAttackDamage(), targetId);
-    if (targetId.has_value() && !result.targetDied) {
-        context.addVulnerable(id(), *targetId, 3);
+    if (targetId.has_value()) {
+        context.applyDebuffAfterHeroHit(id(), *targetId, result, {.vulnerableLayers = 3});
     }
     static_cast<void>(context.healHero(id(), checkedMultiply(attributeValue(), 2)));
 }
@@ -129,8 +129,8 @@ SilentHunter::SilentHunter(HeroId id, Position position, int attributeValue,
 void SilentHunter::performAttack(CombatContext& context) {
     std::optional<HeroId> targetId;
     const DamageResult result = performNormalAttack(*this, context, currentBaseAttackDamage(), targetId);
-    if (targetId.has_value() && !result.targetDied) {
-        context.addWeak(id(), *targetId, 2);
+    if (targetId.has_value()) {
+        context.applyDebuffAfterHeroHit(id(), *targetId, result, {.weakLayers = 2});
     }
     static_cast<void>(context.gainShield(id(), checkedMultiply(attributeValue(), 8)));
 }
@@ -161,9 +161,9 @@ void Regent::performAttack(CombatContext& context) {
     std::optional<HeroId> targetId;
     const DamageResult result = performNormalAttack(*this, context, currentBaseAttackDamage(), targetId);
     if (empowered) {
-        if (targetId.has_value() && !result.targetDied) {
-            context.addWeak(id(), *targetId, 2);
-            context.addVulnerable(id(), *targetId, 1);
+        if (targetId.has_value()) {
+            context.applyDebuffAfterHeroHit(
+                id(), *targetId, result, {.vulnerableLayers = 1, .weakLayers = 2});
         }
         radiantStars_ -= 2;
     } else {
@@ -203,41 +203,39 @@ void ChickenPot::performAttack(CombatContext& context) {
         return;
     }
 
-    if (context.gameFinished()) {
-        return;
-    }
+    if (!context.gameFinished()) {
+        context.emitEvent(heroEvent(CombatEventType::LightningAttackStarted, *this, context));
+        for (int activation = 0;
+             activation < LightningActivationCount && !context.gameFinished();
+             ++activation) {
+            const LightningTarget target = context.chooseRandomLightningTarget();
+            CombatEvent activatedEvent = heroEvent(CombatEventType::LightningActivated, *this, context);
+            activatedEvent.amount = activation + 1;
+            activatedEvent.damageKind = DamageKind::Lightning;
+            context.emitEvent(std::move(activatedEvent));
 
-    context.emitEvent(heroEvent(CombatEventType::LightningAttackStarted, *this, context));
-    bool activated = false;
-    for (int activation = 0; activation < LightningActivationCount && !context.gameFinished(); ++activation) {
-        const LightningTarget target = context.chooseRandomLightningTarget();
-        CombatEvent activatedEvent = heroEvent(CombatEventType::LightningActivated, *this, context);
-        activatedEvent.amount = activation + 1;
-        activatedEvent.damageKind = DamageKind::Lightning;
-        context.emitEvent(std::move(activatedEvent));
+            CombatEvent selected = heroEvent(CombatEventType::LightningTargetSelected, *this, context);
+            selected.targetHeroId = target.heroId;
+            selected.targetPlayerId = target.targetPlayerId;
+            selected.amount = target.kind == LightningTargetKind::Tower ? 1 : 0;
+            selected.damageKind = DamageKind::Lightning;
+            context.emitEvent(std::move(selected));
 
-        CombatEvent selected = heroEvent(CombatEventType::LightningTargetSelected, *this, context);
-        selected.targetHeroId = target.heroId;
-        selected.targetPlayerId = target.targetPlayerId;
-        selected.amount = target.kind == LightningTargetKind::Tower ? 1 : 0;
-        selected.damageKind = DamageKind::Lightning;
-        context.emitEvent(std::move(selected));
-
-        if (target.kind == LightningTargetKind::Hero) {
-            static_cast<void>(context.damageHero(id(), *target.heroId, lightningDamage_, DamageKind::Lightning));
-        } else {
-            static_cast<void>(context.damageTower(id(), lightningDamage_, DamageKind::Lightning));
+            if (target.kind == LightningTargetKind::Hero) {
+                static_cast<void>(
+                    context.damageHero(id(), *target.heroId, lightningDamage_, DamageKind::Lightning));
+            } else {
+                static_cast<void>(
+                    context.damageTower(id(), lightningDamage_, DamageKind::Lightning));
+            }
         }
-        activated = true;
     }
 
-    if (activated) {
-        --lightningOrbs_;
-        CombatEvent changed = heroEvent(CombatEventType::LightningOrbChanged, *this, context);
-        changed.amount = -1;
-        changed.lightningOrbs = lightningOrbs_;
-        context.emitEvent(std::move(changed));
-    }
+    --lightningOrbs_;
+    CombatEvent changed = heroEvent(CombatEventType::LightningOrbChanged, *this, context);
+    changed.amount = -1;
+    changed.lightningOrbs = lightningOrbs_;
+    context.emitEvent(std::move(changed));
 }
 
 } // namespace sts

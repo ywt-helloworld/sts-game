@@ -27,6 +27,7 @@ public:
     [[nodiscard]] CombatResolution resolve(int actingPlayerId);
 
 private:
+    void resolveDeathsAndBoardChanges(std::vector<CombatEvent>& events, int actingPlayerId);
     void processTurnEndStatuses(std::vector<CombatEvent>& events, int actingPlayerId);
 
     BoxBoard& board_;

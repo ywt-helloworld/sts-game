@@ -40,28 +40,20 @@ void drawCenteredText(sf::RenderTarget& target,
     target.draw(text);
 }
 
-std::string heroStatusText(const PieceSnapshot& hero) {
-    std::string text;
-    if (hero.shield > 0) {
-        text += "盾" + std::to_string(hero.shield) + " ";
-    }
-    if (hero.vulnerableLayers > 0) {
-        text += "易" + std::to_string(hero.vulnerableLayers) + " ";
-    }
-    if (hero.weakLayers > 0) {
-        text += "弱" + std::to_string(hero.weakLayers) + " ";
-    }
+std::string heroResourceText(const PieceSnapshot& hero) {
     if (hero.heroType == HeroType::Regent) {
-        text += "星" + std::to_string(hero.radiantStars);
-    } else if (hero.heroType == HeroType::ChickenPot) {
-        text += "球" + std::to_string(hero.lightningOrbs);
+        return "星" + std::to_string(hero.radiantStars);
     }
-    return text;
+    if (hero.heroType == HeroType::ChickenPot) {
+        return "球" + std::to_string(hero.lightningOrbs);
+    }
+    return {};
 }
 
 } // namespace
 
-HeroRenderer::HeroRenderer(const ResourceManager& resources) noexcept : resources_(resources) {}
+HeroRenderer::HeroRenderer(const ResourceManager& resources) noexcept
+    : resources_(resources), statusRenderer_(resources) {}
 
 void HeroRenderer::draw(sf::RenderTarget& target,
                         const PieceSnapshot& hero,
@@ -143,13 +135,21 @@ void HeroRenderer::draw(sf::RenderTarget& target,
                      std::max(10U, static_cast<unsigned>(cellRect.size.x * 0.125F)),
                      {hpPosition.x + hpSize.x / 2.0F, hpPosition.y + hpSize.y / 2.0F});
 
-    const std::string statusText = heroStatusText(hero);
-    if (!statusText.empty()) {
+    const float statusBottom = hpPosition.y - 2.0F;
+    statusRenderer_.drawHeroStatuses(target, hero, cellRect, statusBottom, font);
+
+    const std::string resourceText = heroResourceText(hero);
+    if (!resourceText.empty()) {
+        const StatusStripMetrics metrics =
+            statusStripMetrics(heroStatusDisplayItems(hero).size(), cellRect.size.x);
+        const float resourceOffset = metrics.height > 0.0F
+                                         ? metrics.height + std::max(5.0F, cellRect.size.y * 0.035F)
+                                         : std::max(7.0F, cellRect.size.y * 0.06F);
         drawCenteredText(target,
                          font,
-                         statusText,
+                         resourceText,
                          std::max(9U, static_cast<unsigned>(cellRect.size.x * 0.10F)),
-                         {cellCenter.x, hpPosition.y - std::max(7.0F, cellRect.size.y * 0.06F)});
+                         {cellCenter.x, statusBottom - resourceOffset});
     }
 }
 

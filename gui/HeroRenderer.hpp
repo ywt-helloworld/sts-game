@@ -2,6 +2,7 @@
 
 #include "common/Protocol.hpp"
 #include "gui/ResourceManager.hpp"
+#include "gui/StatusEffectRenderer.hpp"
 
 #include <SFML/Graphics/Font.hpp>
 #include <SFML/Graphics/Rect.hpp>
@@ -21,6 +22,7 @@ public:
 
 private:
     const ResourceManager& resources_;
+    StatusEffectRenderer statusRenderer_;
 };
 
 } // namespace sts

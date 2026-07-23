@@ -10,6 +10,8 @@ using HeroId = std::uint64_t;
 enum class HeroType { None, IronFighter, SilentHunter, Regent, ChickenPot };
 enum class GamePhase { WaitingForPlayers, Elimination, Combat, Finished };
 enum class DamageKind { NormalAttack, Lightning };
+enum class TowerDamageSource { DirectAttack, Overflow };
+enum class CombatTargetType { Hero, Tower };
 
 struct HeroStatus {
     int vulnerableLayers{};
@@ -31,6 +33,9 @@ struct TowerSnapshot {
     int playerId{};
     int currentHp{};
     int maxHp{};
+    int vulnerableLayers{};
+    int weakLayers{};
+    bool destroyed{};
 
     bool operator==(const TowerSnapshot&) const = default;
 };
@@ -64,6 +69,7 @@ enum class CombatEventType {
     LightningOrbChanged,
 
     HeroDied,
+    OverflowDamageGenerated,
     HeroConvertedToBox,
     TowerDamaged,
     TowerDestroyed,
@@ -98,8 +104,20 @@ struct CombatEvent {
     int totalLayers{};
     int calculatedDamage{};
     int hpDamageApplied{};
-    int overkillDamage{};
     int targetRemainingHp{};
+    TowerDamageSource towerDamageSource{TowerDamageSource::DirectAttack};
+    int shieldBefore{};
+    int shieldAfter{};
+    int hpBefore{};
+    int hpAfter{};
+    int overflowDamage{};
+    int towerHpBefore{};
+    int towerDamageApplied{};
+    int towerHpAfter{};
+    bool towerDestroyed{};
+    CombatTargetType targetType{CombatTargetType::Hero};
+    std::optional<int> targetTowerPlayerId;
+    bool redirectedBecauseHeroDied{};
 
     bool operator==(const CombatEvent&) const = default;
 };

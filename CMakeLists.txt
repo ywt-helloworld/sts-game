@@ -101,9 +101,11 @@ if(STS_BUILD_NETWORK)
             gui/ClientGameState.cpp
             gui/HeroTextureCatalog.cpp
             gui/InputController.cpp
+            gui/ResourceManager.cpp
+            gui/StatusEffectDisplay.cpp
         )
         target_include_directories(sts_gui_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-        target_link_libraries(sts_gui_logic PUBLIC sts_common)
+        target_link_libraries(sts_gui_logic PUBLIC sts_common SFML::Graphics)
 
         add_executable(sts_gui_client
             gui/main.cpp
@@ -111,8 +113,8 @@ if(STS_BUILD_NETWORK)
             gui/GameWindow.cpp
             gui/BoardRenderer.cpp
             gui/HeroRenderer.cpp
+            gui/StatusEffectRenderer.cpp
             gui/NetworkClient.cpp
-            gui/ResourceManager.cpp
         )
         target_link_libraries(sts_gui_client PRIVATE
             sts_gui_logic

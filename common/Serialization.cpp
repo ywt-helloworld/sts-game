@@ -53,7 +53,9 @@ void writeGameSnapshot(std::ostream& output, const GameSnapshot& game) {
     output << static_cast<int>(game.phase) << ' ' << game.currentPlayerId << ' ' << game.turnId << ' '
            << game.winnerPlayerId.value_or(-1) << ' ';
     for (const TowerSnapshot& tower : game.towers) {
-        output << tower.playerId << ' ' << tower.currentHp << ' ' << tower.maxHp << ' ';
+        output << tower.playerId << ' ' << tower.currentHp << ' ' << tower.maxHp << ' '
+               << tower.vulnerableLayers << ' ' << tower.weakLayers << ' '
+               << tower.destroyed << ' ';
     }
     writeSnapshot(output, game.board);
     output << game.openingTurnPending << ' ';
@@ -70,7 +72,8 @@ bool readGameSnapshot(std::istream& input, GameSnapshot& game) {
     game.phase = static_cast<GamePhase>(phase);
     game.winnerPlayerId = winner >= 0 ? std::optional<int>{winner} : std::nullopt;
     for (TowerSnapshot& tower : game.towers) {
-        if (!(input >> tower.playerId >> tower.currentHp >> tower.maxHp)) {
+        if (!(input >> tower.playerId >> tower.currentHp >> tower.maxHp >>
+              tower.vulnerableLayers >> tower.weakLayers >> tower.destroyed)) {
             return false;
         }
     }
@@ -93,7 +96,16 @@ void writeCombatEvent(std::ostream& output, const CombatEvent& event) {
            << event.radiantStars << ' ' << event.lightningOrbs << ' '
            << event.previousLayers << ' ' << event.addedLayers << ' ' << event.totalLayers << ' ';
     output << event.calculatedDamage << ' ' << event.hpDamageApplied << ' '
-           << event.overkillDamage << ' ' << event.targetRemainingHp << ' ';
+           << event.targetRemainingHp << ' '
+           << static_cast<int>(event.towerDamageSource) << ' '
+           << event.shieldBefore << ' ' << event.shieldAfter << ' '
+           << event.hpBefore << ' ' << event.hpAfter << ' '
+           << event.overflowDamage << ' ' << event.towerHpBefore << ' '
+           << event.towerDamageApplied << ' ' << event.towerHpAfter << ' '
+           << event.towerDestroyed << ' '
+           << static_cast<int>(event.targetType) << ' '
+           << event.targetTowerPlayerId.value_or(-1) << ' '
+           << event.redirectedBecauseHeroDied << ' ';
 }
 
 bool readCombatEvent(std::istream& input, CombatEvent& event) {
@@ -104,6 +116,9 @@ bool readCombatEvent(std::istream& input, CombatEvent& event) {
     int targetPlayer{};
     int winner{};
     int damageKind{};
+    int towerDamageSource{};
+    int targetType{};
+    int targetTowerPlayerId{};
     if (!(input >> type >> attacker >> target >> actingPlayer >> targetPlayer >>
           event.damage >> event.remainingHp >> winner >> damageKind >>
           event.baseDamage >> event.damageAfterWeak >> event.damageAfterVulnerable >>
@@ -111,15 +126,28 @@ bool readCombatEvent(std::istream& input, CombatEvent& event) {
           event.amount >> event.vulnerableLayers >> event.weakLayers >>
           event.radiantStars >> event.lightningOrbs >> event.previousLayers >>
           event.addedLayers >> event.totalLayers >> event.calculatedDamage >>
-          event.hpDamageApplied >> event.overkillDamage >> event.targetRemainingHp) ||
+          event.hpDamageApplied >> event.targetRemainingHp >>
+          towerDamageSource >> event.shieldBefore >> event.shieldAfter >>
+          event.hpBefore >> event.hpAfter >> event.overflowDamage >>
+          event.towerHpBefore >> event.towerDamageApplied >> event.towerHpAfter >>
+          event.towerDestroyed >> targetType >> targetTowerPlayerId >>
+          event.redirectedBecauseHeroDied) ||
         type < static_cast<int>(CombatEventType::OpeningTurnCompleted) ||
         type > static_cast<int>(CombatEventType::GameFinished) ||
         damageKind < static_cast<int>(DamageKind::NormalAttack) ||
-        damageKind > static_cast<int>(DamageKind::Lightning)) {
+        damageKind > static_cast<int>(DamageKind::Lightning) ||
+        towerDamageSource < static_cast<int>(TowerDamageSource::DirectAttack) ||
+        towerDamageSource > static_cast<int>(TowerDamageSource::Overflow) ||
+        targetType < static_cast<int>(CombatTargetType::Hero) ||
+        targetType > static_cast<int>(CombatTargetType::Tower)) {
         return false;
     }
     event.type = static_cast<CombatEventType>(type);
     event.damageKind = static_cast<DamageKind>(damageKind);
+    event.towerDamageSource = static_cast<TowerDamageSource>(towerDamageSource);
+    event.targetType = static_cast<CombatTargetType>(targetType);
+    event.targetTowerPlayerId =
+        targetTowerPlayerId < 0 ? std::nullopt : std::optional<int>{targetTowerPlayerId};
     event.attackerHeroId = attacker == 0 ? std::nullopt : std::optional<HeroId>{attacker};
     event.targetHeroId = target == 0 ? std::nullopt : std::optional<HeroId>{target};
     event.actingPlayerId = actingPlayer < 0 ? std::nullopt : std::optional<int>{actingPlayer};
