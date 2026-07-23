@@ -72,11 +72,11 @@ ResourceManager::ResourceManager() {
         textureSet.selected = loadBoxTexture(pieceColor, true);
         heroTextures_[static_cast<std::size_t>(color)] = loadHeroTexture(pieceColor);
     }
-    for (int status = static_cast<int>(StatusIconKind::Vulnerable);
-         status <= static_cast<int>(StatusIconKind::Shield);
-         ++status) {
-        const auto kind = static_cast<StatusIconKind>(status);
-        statusTextures_[static_cast<std::size_t>(status)] = loadStatusTexture(kind);
+    for (int icon = static_cast<int>(HudIconKind::Vulnerable);
+         icon <= static_cast<int>(HudIconKind::LightningChargeOrb);
+         ++icon) {
+        const auto kind = static_cast<HudIconKind>(icon);
+        hudTextures_[static_cast<std::size_t>(icon)] = loadHudTexture(kind);
     }
     loadBackgroundTexture();
 }
@@ -99,9 +99,9 @@ const sf::Texture* ResourceManager::heroTextureFor(PieceColor color) const noexc
     return heroTextures_[index < heroTextures_.size() ? index : 0U];
 }
 
-const sf::Texture* ResourceManager::statusTextureFor(StatusIconKind kind) const noexcept {
+const sf::Texture* ResourceManager::hudTextureFor(HudIconKind kind) const noexcept {
     const auto index = static_cast<std::size_t>(kind);
-    return statusTextures_[index < statusTextures_.size() ? index : 0U];
+    return hudTextures_[index < hudTextures_.size() ? index : 0U];
 }
 
 const sf::Texture* ResourceManager::loadBoxTexture(PieceColor color, bool selected) {
@@ -167,20 +167,21 @@ const sf::Texture* ResourceManager::loadHeroTexture(PieceColor color) {
     return result;
 }
 
-const sf::Texture* ResourceManager::loadStatusTexture(StatusIconKind kind) {
+const sf::Texture* ResourceManager::loadHudTexture(HudIconKind kind) {
     const std::filesystem::path workingDirectory = std::filesystem::current_path();
+    const std::filesystem::path resourceDirectory{hudTextureDirectoryName(kind)};
     const std::vector<std::filesystem::path> searchDirectories{
-        workingDirectory / "assets" / "status",
-        workingDirectory.parent_path() / "assets" / "status",
+        workingDirectory / "assets" / resourceDirectory,
+        workingDirectory.parent_path() / "assets" / resourceDirectory,
     };
-    const auto path = findStatusTextureFile(kind, searchDirectories);
+    const auto path = findHudTextureFile(kind, searchDirectories);
     if (!path.has_value()) {
-        std::string message = "Status texture not found: ";
-        message += statusTextureFilename(kind);
+        std::string message = "HUD texture not found: ";
+        message += hudTextureFilename(kind);
         message += " (searched";
         for (const auto& directory : searchDirectories) {
             message += " ";
-            message += std::filesystem::absolute(directory / statusTextureFilename(kind))
+            message += std::filesystem::absolute(directory / hudTextureFilename(kind))
                            .lexically_normal()
                            .string();
         }
@@ -191,7 +192,7 @@ const sf::Texture* ResourceManager::loadStatusTexture(StatusIconKind kind) {
     auto texture = std::make_unique<sf::Texture>();
     if (!texture->loadFromFile(*path)) {
         throw std::runtime_error(
-            "Failed to load status texture: " +
+            "Failed to load HUD texture: " +
             std::filesystem::absolute(*path).lexically_normal().string());
     }
     texture->setSmooth(true);

@@ -7,19 +7,21 @@
 namespace sts {
 namespace {
 
-constexpr std::array statusFiles{
+constexpr std::array hudFiles{
     std::string_view{"vulnerable.png"},
     std::string_view{"weak.png"},
     std::string_view{"shield.png"},
+    std::string_view{"glory_star.png"},
+    std::string_view{"lightning_charge_orb.png"},
 };
 
-std::size_t statusIndex(StatusIconKind kind) noexcept {
+std::size_t hudIndex(HudIconKind kind) noexcept {
     const auto index = static_cast<std::size_t>(kind);
-    return index < statusFiles.size() ? index : 0U;
+    return index < hudFiles.size() ? index : 0U;
 }
 
 void appendPositive(std::vector<StatusDisplayItem>& items,
-                    StatusIconKind kind,
+                    HudIconKind kind,
                     int value) {
     if (value > 0) {
         items.push_back({kind, value});
@@ -28,14 +30,21 @@ void appendPositive(std::vector<StatusDisplayItem>& items,
 
 } // namespace
 
-std::string_view statusTextureFilename(StatusIconKind kind) noexcept {
-    return statusFiles[statusIndex(kind)];
+std::string_view hudTextureFilename(HudIconKind kind) noexcept {
+    return hudFiles[hudIndex(kind)];
+}
+
+std::string_view hudTextureDirectoryName(HudIconKind kind) noexcept {
+    return kind == HudIconKind::GloryStar ||
+                   kind == HudIconKind::LightningChargeOrb
+               ? std::string_view{"resources"}
+               : std::string_view{"status"};
 }
 
 std::optional<std::filesystem::path>
-findStatusTextureFile(StatusIconKind kind,
-                      const std::vector<std::filesystem::path>& searchDirectories) noexcept {
-    const std::filesystem::path filename{statusTextureFilename(kind)};
+findHudTextureFile(HudIconKind kind,
+                   const std::vector<std::filesystem::path>& searchDirectories) noexcept {
+    const std::filesystem::path filename{hudTextureFilename(kind)};
     for (const auto& directory : searchDirectories) {
         const std::filesystem::path candidate = directory / filename;
         std::error_code error;
@@ -50,9 +59,9 @@ std::vector<StatusDisplayItem>
 heroStatusDisplayItems(const PieceSnapshot& hero) {
     std::vector<StatusDisplayItem> items;
     items.reserve(3U);
-    appendPositive(items, StatusIconKind::Vulnerable, hero.vulnerableLayers);
-    appendPositive(items, StatusIconKind::Weak, hero.weakLayers);
-    appendPositive(items, StatusIconKind::Shield, hero.shield);
+    appendPositive(items, HudIconKind::Vulnerable, hero.vulnerableLayers);
+    appendPositive(items, HudIconKind::Weak, hero.weakLayers);
+    appendPositive(items, HudIconKind::Shield, hero.shield);
     return items;
 }
 
@@ -60,9 +69,24 @@ std::vector<StatusDisplayItem>
 towerStatusDisplayItems(const TowerSnapshot& tower) {
     std::vector<StatusDisplayItem> items;
     items.reserve(2U);
-    appendPositive(items, StatusIconKind::Vulnerable, tower.vulnerableLayers);
-    appendPositive(items, StatusIconKind::Weak, tower.weakLayers);
+    appendPositive(items, HudIconKind::Vulnerable, tower.vulnerableLayers);
+    appendPositive(items, HudIconKind::Weak, tower.weakLayers);
     return items;
+}
+
+std::vector<StatusDisplayItem>
+heroResourceDisplayItems(const PieceSnapshot& hero) {
+    switch (hero.heroType) {
+    case HeroType::Regent:
+        return {{HudIconKind::GloryStar, hero.radiantStars}};
+    case HeroType::ChickenPot:
+        return {{HudIconKind::LightningChargeOrb, hero.lightningOrbs}};
+    case HeroType::None:
+    case HeroType::IronFighter:
+    case HeroType::SilentHunter:
+        return {};
+    }
+    return {};
 }
 
 float statusIconSize(float referenceWidth) noexcept {

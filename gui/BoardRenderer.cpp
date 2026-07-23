@@ -3,6 +3,7 @@
 #include "common/PlayerViewTransform.hpp"
 #include "gui/BoxTextureCatalog.hpp"
 #include "gui/HeroTextureCatalog.hpp"
+#include "gui/WindowLayout.hpp"
 
 #include <SFML/Graphics/CircleShape.hpp>
 #include <SFML/Graphics/RectangleShape.hpp>
@@ -188,12 +189,14 @@ BoardRenderer::BoardRenderer()
 
 sf::FloatRect BoardRenderer::confirmButtonBounds(const sf::RenderWindow& window) const noexcept {
     const auto size = window.getSize();
-    return {{static_cast<float>(size.x) - 164.0F, static_cast<float>(size.y) - 70.0F}, {140.0F, 44.0F}};
+    const ButtonLayout layout = confirmButtonLayout(size.x, size.y);
+    return {{layout.left, layout.top}, {layout.width, layout.height}};
 }
 
 sf::FloatRect BoardRenderer::clearButtonBounds(const sf::RenderWindow& window) const noexcept {
     const auto size = window.getSize();
-    return {{24.0F, static_cast<float>(size.y) - 70.0F}, {140.0F, 44.0F}};
+    const ButtonLayout layout = clearButtonLayout(size.x, size.y);
+    return {{layout.left, layout.top}, {layout.width, layout.height}};
 }
 
 void BoardRenderer::draw(sf::RenderWindow& window,

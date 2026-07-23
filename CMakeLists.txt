@@ -103,6 +103,7 @@ if(STS_BUILD_NETWORK)
             gui/InputController.cpp
             gui/ResourceManager.cpp
             gui/StatusEffectDisplay.cpp
+            gui/WindowLayout.cpp
         )
         target_include_directories(sts_gui_logic PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
         target_link_libraries(sts_gui_logic PUBLIC sts_common SFML::Graphics)

@@ -9,6 +9,7 @@
 #include "gui/ResourceManager.hpp"
 #include "gui/StatusEffectDisplay.hpp"
 #include "gui/ThreadSafeMessageQueue.hpp"
+#include "gui/WindowLayout.hpp"
 
 #include <filesystem>
 #include <array>
@@ -82,6 +83,39 @@ void geometryTests() {
     REQUIRE(nearlyEqual(enlarged.cellSize, 121.5F));
     REQUIRE(nearlyEqual(enlarged.left, 596.25F));
     REQUIRE(nearlyEqual(enlarged.top, 67.5F));
+}
+
+void windowAndButtonLayoutTests() {
+    const WindowPlacement standard = fitWindowInsideDesktop(1920U, 1080U);
+    REQUIRE(standard.width == 1651U);
+    REQUIRE(standard.height == 929U);
+    REQUIRE(standard.left == 134);
+    REQUIRE(standard.top == 75);
+    REQUIRE(standard.width < 1920U);
+    REQUIRE(standard.height < 1080U);
+
+    const WindowPlacement large = fitWindowInsideDesktop(2560U, 1440U);
+    REQUIRE(large.width == 1800U);
+    REQUIRE(large.height == 1100U);
+    REQUIRE(large.left == 380);
+    REQUIRE(large.top == 170);
+
+    const ButtonLayout clear = clearButtonLayout(1600U, 900U);
+    const ButtonLayout confirm = confirmButtonLayout(1600U, 900U);
+    REQUIRE(nearlyEqual(clear.left, 24.0F));
+    REQUIRE(nearlyEqual(clear.top, 830.0F));
+    REQUIRE(nearlyEqual(confirm.left, 1436.0F));
+    REQUIRE(nearlyEqual(confirm.top, 830.0F));
+    REQUIRE(clear.left >= 0.0F);
+    REQUIRE(clear.top + clear.height <= 900.0F);
+    REQUIRE(confirm.left + confirm.width <= 1600.0F);
+    REQUIRE(confirm.top + confirm.height <= 900.0F);
+
+    const ButtonLayout resized = confirmButtonLayout(900U, 650U);
+    REQUIRE(nearlyEqual(resized.left, 736.0F));
+    REQUIRE(nearlyEqual(resized.top, 580.0F));
+    REQUIRE(resized.left + resized.width <= 900.0F);
+    REQUIRE(resized.top + resized.height <= 650.0F);
 }
 
 void selectionTests() {
@@ -338,14 +372,23 @@ void heroTextureTests() {
 }
 
 void statusEffectDisplayTests() {
-    REQUIRE(statusTextureFilename(StatusIconKind::Vulnerable) == "vulnerable.png");
-    REQUIRE(statusTextureFilename(StatusIconKind::Weak) == "weak.png");
-    REQUIRE(statusTextureFilename(StatusIconKind::Shield) == "shield.png");
+    REQUIRE(hudTextureFilename(HudIconKind::Vulnerable) == "vulnerable.png");
+    REQUIRE(hudTextureFilename(HudIconKind::Weak) == "weak.png");
+    REQUIRE(hudTextureFilename(HudIconKind::Shield) == "shield.png");
+    REQUIRE(hudTextureFilename(HudIconKind::GloryStar) == "glory_star.png");
+    REQUIRE(hudTextureFilename(HudIconKind::LightningChargeOrb) ==
+            "lightning_charge_orb.png");
+    REQUIRE(hudTextureDirectoryName(HudIconKind::Vulnerable) == "status");
+    REQUIRE(hudTextureDirectoryName(HudIconKind::GloryStar) == "resources");
 
     ResourceManager resources;
-    for (const StatusIconKind kind :
-         {StatusIconKind::Vulnerable, StatusIconKind::Weak, StatusIconKind::Shield}) {
-        const sf::Texture* texture = resources.statusTextureFor(kind);
+    for (const HudIconKind kind :
+         {HudIconKind::Vulnerable,
+          HudIconKind::Weak,
+          HudIconKind::Shield,
+          HudIconKind::GloryStar,
+          HudIconKind::LightningChargeOrb}) {
+        const sf::Texture* texture = resources.hudTextureFor(kind);
         REQUIRE(texture != nullptr);
         REQUIRE(texture->getSize().x > 0U);
         REQUIRE(texture->getSize().y > 0U);
@@ -357,24 +400,24 @@ void statusEffectDisplayTests() {
 
     hero.vulnerableLayers = 3;
     REQUIRE(heroStatusDisplayItems(hero) ==
-            std::vector<StatusDisplayItem>({{StatusIconKind::Vulnerable, 3}}));
+            std::vector<StatusDisplayItem>({{HudIconKind::Vulnerable, 3}}));
     hero.vulnerableLayers = 0;
     hero.weakLayers = 2;
     REQUIRE(heroStatusDisplayItems(hero) ==
-            std::vector<StatusDisplayItem>({{StatusIconKind::Weak, 2}}));
+            std::vector<StatusDisplayItem>({{HudIconKind::Weak, 2}}));
     hero.weakLayers = 0;
     hero.shield = 64;
     REQUIRE(heroStatusDisplayItems(hero) ==
-            std::vector<StatusDisplayItem>({{StatusIconKind::Shield, 64}}));
+            std::vector<StatusDisplayItem>({{HudIconKind::Shield, 64}}));
 
     hero.vulnerableLayers = 3;
     hero.weakLayers = 2;
     const std::vector<StatusDisplayItem> allHeroItems = heroStatusDisplayItems(hero);
     REQUIRE(allHeroItems ==
             std::vector<StatusDisplayItem>({
-                {StatusIconKind::Vulnerable, 3},
-                {StatusIconKind::Weak, 2},
-                {StatusIconKind::Shield, 64},
+                {HudIconKind::Vulnerable, 3},
+                {HudIconKind::Weak, 2},
+                {HudIconKind::Shield, 64},
             }));
 
     TowerSnapshot tower{1, 872, 1000};
@@ -383,8 +426,8 @@ void statusEffectDisplayTests() {
     tower.weakLayers = 1;
     REQUIRE(towerStatusDisplayItems(tower) ==
             std::vector<StatusDisplayItem>({
-                {StatusIconKind::Vulnerable, 2},
-                {StatusIconKind::Weak, 1},
+                {HudIconKind::Vulnerable, 2},
+                {HudIconKind::Weak, 1},
             }));
     tower.vulnerableLayers = 0;
     tower.weakLayers = 0;
@@ -418,12 +461,51 @@ void statusEffectDisplayTests() {
             heroStatusDisplayItems((*player1.board)[5][0]));
     REQUIRE(towerStatusDisplayItems(player0.towers[1]) ==
             towerStatusDisplayItems(player1.towers[1]));
+
+    PieceSnapshot ironFighter;
+    ironFighter.type = PieceType::Hero;
+    ironFighter.heroType = HeroType::IronFighter;
+    REQUIRE(heroResourceDisplayItems(ironFighter).empty());
+
+    PieceSnapshot silentHunter = ironFighter;
+    silentHunter.heroType = HeroType::SilentHunter;
+    REQUIRE(heroResourceDisplayItems(silentHunter).empty());
+
+    PieceSnapshot regent = ironFighter;
+    regent.heroType = HeroType::Regent;
+    regent.radiantStars = 4;
+    REQUIRE(heroResourceDisplayItems(regent) ==
+            std::vector<StatusDisplayItem>({{HudIconKind::GloryStar, 4}}));
+    regent.radiantStars = 1;
+    REQUIRE(heroResourceDisplayItems(regent).front().value == 1);
+
+    PieceSnapshot chickenPot = ironFighter;
+    chickenPot.heroType = HeroType::ChickenPot;
+    chickenPot.lightningOrbs = 0;
+    REQUIRE(heroResourceDisplayItems(chickenPot) ==
+            std::vector<StatusDisplayItem>(
+                {{HudIconKind::LightningChargeOrb, 0}}));
+    chickenPot.lightningOrbs = 1;
+    REQUIRE(heroResourceDisplayItems(chickenPot).front().value == 1);
+
+    synchronizedBoard[5][1] = regent;
+    synchronizedBoard[5][1].position = {5, 1};
+    synchronizedBoard[5][2] = chickenPot;
+    synchronizedBoard[5][2].position = {5, 2};
+    synchronizedSnapshot = makeGameSnapshot(synchronizedBoard, 0, 10);
+    player0.apply(GameStartedMessage{synchronizedSnapshot});
+    player1.apply(GameStartedMessage{synchronizedSnapshot});
+    REQUIRE(heroResourceDisplayItems((*player0.board)[5][1]) ==
+            heroResourceDisplayItems((*player1.board)[5][1]));
+    REQUIRE(heroResourceDisplayItems((*player0.board)[5][2]) ==
+            heroResourceDisplayItems((*player1.board)[5][2]));
 }
 
 } // namespace
 
 void runGuiClientTests() {
     geometryTests();
+    windowAndButtonLayoutTests();
     selectionTests();
     pathConversionTests();
     stateAndQueueTests();

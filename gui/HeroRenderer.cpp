@@ -40,16 +40,6 @@ void drawCenteredText(sf::RenderTarget& target,
     target.draw(text);
 }
 
-std::string heroResourceText(const PieceSnapshot& hero) {
-    if (hero.heroType == HeroType::Regent) {
-        return "星" + std::to_string(hero.radiantStars);
-    }
-    if (hero.heroType == HeroType::ChickenPot) {
-        return "球" + std::to_string(hero.lightningOrbs);
-    }
-    return {};
-}
-
 } // namespace
 
 HeroRenderer::HeroRenderer(const ResourceManager& resources) noexcept
@@ -138,19 +128,14 @@ void HeroRenderer::draw(sf::RenderTarget& target,
     const float statusBottom = hpPosition.y - 2.0F;
     statusRenderer_.drawHeroStatuses(target, hero, cellRect, statusBottom, font);
 
-    const std::string resourceText = heroResourceText(hero);
-    if (!resourceText.empty()) {
-        const StatusStripMetrics metrics =
-            statusStripMetrics(heroStatusDisplayItems(hero).size(), cellRect.size.x);
-        const float resourceOffset = metrics.height > 0.0F
-                                         ? metrics.height + std::max(5.0F, cellRect.size.y * 0.035F)
-                                         : std::max(7.0F, cellRect.size.y * 0.06F);
-        drawCenteredText(target,
-                         font,
-                         resourceText,
-                         std::max(9U, static_cast<unsigned>(cellRect.size.x * 0.10F)),
-                         {cellCenter.x, statusBottom - resourceOffset});
-    }
+    const StatusStripMetrics statusMetrics =
+        statusStripMetrics(heroStatusDisplayItems(hero).size(), cellRect.size.x);
+    const float resourceBottom =
+        statusBottom - (statusMetrics.height > 0.0F
+                            ? statusMetrics.height +
+                                  std::max(3.0F, cellRect.size.y * 0.025F)
+                            : 0.0F);
+    statusRenderer_.drawHeroResource(target, hero, cellRect, resourceBottom, font);
 }
 
 } // namespace sts

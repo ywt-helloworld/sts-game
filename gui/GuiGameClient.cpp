@@ -1,5 +1,6 @@
 #include "gui/GuiGameClient.hpp"
 
+#include <SFML/Graphics/View.hpp>
 #include <SFML/Window/Event.hpp>
 #include <SFML/Window/Keyboard.hpp>
 #include <SFML/Window/Mouse.hpp>
@@ -40,6 +41,16 @@ void GuiGameClient::handleEvents() {
             window_.close();
             continue;
         }
+        if (const auto* resized = event->getIf<sf::Event::Resized>()) {
+            if (resized->size.x > 0U && resized->size.y > 0U) {
+                window_.renderWindow().setView(sf::View(sf::FloatRect{
+                    {0.0F, 0.0F},
+                    {static_cast<float>(resized->size.x),
+                     static_cast<float>(resized->size.y)},
+                }));
+            }
+            continue;
+        }
         if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
             if (key->code == sf::Keyboard::Key::Escape) {
                 input_.clear();
@@ -57,7 +68,8 @@ void GuiGameClient::handleEvents() {
             continue;
         }
 
-        const sf::Vector2f point{static_cast<float>(mouse->position.x), static_cast<float>(mouse->position.y)};
+        const sf::Vector2f point =
+            window_.renderWindow().mapPixelToCoords(mouse->position);
         if (renderer_.clearButtonBounds(window_.renderWindow()).contains(point)) {
             input_.clear();
             continue;

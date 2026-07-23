@@ -31,6 +31,24 @@ void StatusEffectRenderer::drawHeroStatuses(sf::RenderTarget& target,
               font);
 }
 
+void StatusEffectRenderer::drawHeroResource(sf::RenderTarget& target,
+                                            const PieceSnapshot& hero,
+                                            const sf::FloatRect& cellRect,
+                                            float bottom,
+                                            const sf::Font* font) const {
+    const std::vector<StatusDisplayItem> items = heroResourceDisplayItems(hero);
+    const StatusStripMetrics metrics = statusStripMetrics(items.size(), cellRect.size.x);
+    if (items.empty()) {
+        return;
+    }
+    drawItems(target,
+              items,
+              {{cellRect.position.x + 2.0F, bottom - metrics.height},
+               {cellRect.size.x - 4.0F, metrics.height}},
+              cellRect.size.x,
+              font);
+}
+
 void StatusEffectRenderer::drawTowerStatuses(sf::RenderTarget& target,
                                              const TowerSnapshot& tower,
                                              const sf::FloatRect& bounds,
@@ -62,7 +80,7 @@ void StatusEffectRenderer::drawItems(sf::RenderTarget& target,
         panel.setOutlineThickness(1.0F);
         target.draw(panel);
 
-        const sf::Texture* texture = resources_.statusTextureFor(item.kind);
+        const sf::Texture* texture = resources_.hudTextureFor(item.kind);
         if (texture != nullptr) {
             const sf::Vector2u textureSize = texture->getSize();
             const float scale = std::min(metrics.iconSize / static_cast<float>(textureSize.x),

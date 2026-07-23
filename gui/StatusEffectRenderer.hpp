@@ -21,6 +21,12 @@ public:
                           float bottom,
                           const sf::Font* font) const;
 
+    void drawHeroResource(sf::RenderTarget& target,
+                          const PieceSnapshot& hero,
+                          const sf::FloatRect& cellRect,
+                          float bottom,
+                          const sf::Font* font) const;
+
     void drawTowerStatuses(sf::RenderTarget& target,
                            const TowerSnapshot& tower,
                            const sf::FloatRect& bounds,
