@@ -115,10 +115,10 @@ void attackOrderTests() {
     placeHero(board, 20, PieceColor::Green, {4, 4}, 3, 1);
     placeHero(board, 21, PieceColor::Green, {4, 0}, 3, 1);
     placeHero(board, 22, PieceColor::Green, {3, 0}, 3, 1);
-    REQUIRE(context0.firstEnemyInNormalAttackOrder() == HeroId{21});
-    static_cast<void>(board.heroById(21)->receiveDamage(100000));
     REQUIRE(context0.firstEnemyInNormalAttackOrder() == HeroId{20});
     static_cast<void>(board.heroById(20)->receiveDamage(100000));
+    REQUIRE(context0.firstEnemyInNormalAttackOrder() == HeroId{21});
+    static_cast<void>(board.heroById(21)->receiveDamage(100000));
     REQUIRE(context0.firstEnemyInNormalAttackOrder() == HeroId{22});
 
     CombatContext context1(1, board, towers, random, events);
@@ -308,12 +308,12 @@ void chickenPotTests() {
     {
         BoxBoard board = test::solidBoard();
         Hero* chicken = placeHero(board, 80, PieceColor::Blue, {5, 0}, 1, 0);
-        Hero* first = placeHero(board, 81, PieceColor::Red, {4, 0}, 1, 1);
-        Hero* second = placeHero(board, 82, PieceColor::Red, {4, 1}, 10, 1);
+        Hero* first = placeHero(board, 81, PieceColor::Red, {4, 4}, 1, 1);
+        Hero* second = placeHero(board, 82, PieceColor::Red, {4, 3}, 10, 1);
         lowerToHp(*first, 12);
         const int secondHp = second->currentHp();
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
-        CombatRandom random(std::vector<std::size_t>{0, 0});
+        CombatRandom random(std::vector<std::size_t>{1, 0});
         std::vector<CombatEvent> events;
         performOne(*chicken, 0, board, towers, random, events);
         REQUIRE(first->isDead());
@@ -360,23 +360,23 @@ void singleTargetAndOverkillTests() {
     const auto verifySingleNormalTarget = [](PieceColor attackerColor, HeroId firstId) {
         BoxBoard board = test::solidBoard();
         Hero* attacker = placeHero(board, firstId, attackerColor, {5, 0}, 10, 0);
-        Hero* left = placeHero(board, firstId + 1, PieceColor::Red, {4, 0}, 20, 1);
-        Hero* right = placeHero(board, firstId + 2, PieceColor::Red, {4, 1}, 20, 1);
-        const int leftHp = left->currentHp();
-        const int rightHp = right->currentHp();
+        Hero* screenLeft = placeHero(board, firstId + 1, PieceColor::Red, {4, 0}, 20, 1);
+        Hero* screenRight = placeHero(board, firstId + 2, PieceColor::Red, {4, 1}, 20, 1);
+        const int screenLeftHp = screenLeft->currentHp();
+        const int screenRightHp = screenRight->currentHp();
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
         CombatRandom random(23U);
         std::vector<CombatEvent> events;
         performOne(*attacker, 0, board, towers, random, events);
-        REQUIRE(left->currentHp() < leftHp);
-        REQUIRE(right->currentHp() == rightHp);
+        REQUIRE(screenLeft->currentHp() == screenLeftHp);
+        REQUIRE(screenRight->currentHp() < screenRightHp);
         REQUIRE(towers[1].currentHp() == Tower::MaxHp);
         std::size_t normalDamageEvents = 0U;
         for (const CombatEvent& event : events) {
             if (event.type == CombatEventType::HeroDamaged &&
                 event.damageKind == DamageKind::NormalAttack) {
                 ++normalDamageEvents;
-                REQUIRE(event.targetHeroId == left->id());
+                REQUIRE(event.targetHeroId == screenRight->id());
             }
         }
         REQUIRE(normalDamageEvents == 1U);
@@ -396,11 +396,11 @@ void singleTargetAndOverkillTests() {
         REQUIRE(regent->radiantStars() == 1);
         Hero* left = placeHero(board, 241, PieceColor::Red, {4, 0}, 20, 1);
         Hero* right = placeHero(board, 242, PieceColor::Red, {4, 1}, 20, 1);
-        const int rightHp = right->currentHp();
+        const int leftHp = left->currentHp();
         events.clear();
         performOne(*regent, 0, board, towers, random, events);
-        REQUIRE(left->currentHp() == left->maxHp() - 60);
-        REQUIRE(right->currentHp() == rightHp);
+        REQUIRE(left->currentHp() == leftHp);
+        REQUIRE(right->currentHp() == right->maxHp() - 60);
         REQUIRE(countEvents(events, CombatEventType::HeroDamaged) == 1U);
     }
 
@@ -409,19 +409,19 @@ void singleTargetAndOverkillTests() {
         Hero* chicken = placeHero(board, 250, PieceColor::Blue, {5, 0}, 10, 0);
         Hero* left = placeHero(board, 251, PieceColor::Red, {4, 0}, 20, 1);
         Hero* right = placeHero(board, 252, PieceColor::Red, {4, 1}, 20, 1);
-        const int rightHp = right->currentHp();
+        const int leftHp = left->currentHp();
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
         CombatRandom random(std::vector<std::size_t>{2, 2});
         std::vector<CombatEvent> events;
         performOne(*chicken, 0, board, towers, random, events);
-        REQUIRE(left->currentHp() == left->maxHp() - 60);
-        REQUIRE(right->currentHp() == rightHp);
+        REQUIRE(left->currentHp() == leftHp);
+        REQUIRE(right->currentHp() == right->maxHp() - 60);
         std::size_t normalDamageEvents = 0U;
         for (const CombatEvent& event : events) {
             if (event.type == CombatEventType::HeroDamaged &&
                 event.damageKind == DamageKind::NormalAttack) {
                 ++normalDamageEvents;
-                REQUIRE(event.targetHeroId == left->id());
+                REQUIRE(event.targetHeroId == right->id());
             }
         }
         REQUIRE(normalDamageEvents == 1U);
@@ -430,8 +430,8 @@ void singleTargetAndOverkillTests() {
     {
         BoxBoard board = test::solidBoard();
         Hero* chicken = placeHero(board, 255, PieceColor::Blue, {5, 0}, 1, 0);
-        Hero* first = placeHero(board, 256, PieceColor::Red, {4, 0}, 1, 1);
-        Hero* second = placeHero(board, 257, PieceColor::Red, {4, 1}, 10, 1);
+        Hero* first = placeHero(board, 256, PieceColor::Red, {4, 4}, 1, 1);
+        Hero* second = placeHero(board, 257, PieceColor::Red, {4, 3}, 10, 1);
         lowerToHp(*first, 3);
         const int secondHp = second->currentHp();
         std::array<Tower, 2> towers{Tower{0}, Tower{1}};
@@ -464,9 +464,9 @@ void singleTargetAndOverkillTests() {
     {
         BoxBoard board = test::solidBoard();
         Hero* attacker = placeHero(board, 258, PieceColor::Red, {5, 0}, 10, 0);
-        Hero* victim = placeHero(board, 259, PieceColor::Yellow, {4, 0}, 10, 1);
-        Hero* sameRow = placeHero(board, 263, PieceColor::Yellow, {4, 1}, 10, 1);
-        Hero* rearRow = placeHero(board, 264, PieceColor::Yellow, {3, 0}, 10, 1);
+        Hero* victim = placeHero(board, 259, PieceColor::Yellow, {4, 4}, 10, 1);
+        Hero* sameRow = placeHero(board, 263, PieceColor::Yellow, {4, 3}, 10, 1);
+        Hero* rearRow = placeHero(board, 264, PieceColor::Yellow, {3, 4}, 10, 1);
         lowerToHp(*victim, 30);
         const int sameRowHp = sameRow->currentHp();
         const int rearRowHp = rearRow->currentHp();

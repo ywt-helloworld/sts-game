@@ -86,8 +86,27 @@ bool CombatContext::hasLivingEnemies() const {
 }
 
 std::optional<HeroId> CombatContext::firstEnemyInNormalAttackOrder() const {
-    const std::vector<HeroId> ids = livingEnemyHeroIds();
-    return ids.empty() ? std::nullopt : std::optional<HeroId>{ids.front()};
+    const int defender = defendingPlayerId();
+    if (defender == 1) {
+        for (int row = PlayerAreaRows - 1; row >= 0; --row) {
+            for (int column = BoardColumns - 1; column >= 0; --column) {
+                const auto* hero = dynamic_cast<const Hero*>(board_.pieceAt({row, column}));
+                if (hero != nullptr && hero->isAlive()) {
+                    return hero->id();
+                }
+            }
+        }
+    } else {
+        for (int row = PlayerAreaRows; row < BoardRows; ++row) {
+            for (int column = 0; column < BoardColumns; ++column) {
+                const auto* hero = dynamic_cast<const Hero*>(board_.pieceAt({row, column}));
+                if (hero != nullptr && hero->isAlive()) {
+                    return hero->id();
+                }
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 Hero* CombatContext::findHero(HeroId id) noexcept {
